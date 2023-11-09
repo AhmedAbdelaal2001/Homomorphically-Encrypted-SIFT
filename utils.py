@@ -43,22 +43,20 @@ def convolve2D(image, kernel, padding=0, strides=1):
 
     # Apply Equal Padding to All Sides
     if padding != 0:
-        imagePadded = np.zeros((image.shape[0] + padding*2, image.shape[1] + padding*2))
-        imagePadded[int(padding):int(-1 * padding), int(padding):int(-1 * padding)] = image
-        print(imagePadded)
+        imagePadded = np.pad(image, ((padding, padding), (padding, padding)), mode='constant', constant_values=0)
     else:
         imagePadded = image
 
     # Iterate through image
-    for y in range(image.shape[1]):
+    for y in range(imagePadded.shape[1]):
         # Exit Convolution
-        if y > image.shape[1] - yKernShape:
+        if y > imagePadded.shape[1] - yKernShape:
             break
         # Only Convolve if y has gone down by the specified Strides
         if y % strides == 0:
-            for x in range(image.shape[0]):
+            for x in range(imagePadded.shape[0]):
                 # Go to next row once kernel is out of bounds
-                if x > image.shape[0] - xKernShape:
+                if x > imagePadded.shape[0] - xKernShape:
                     break
                 try:
                     # Only Convolve if x has moved by the specified Strides
@@ -68,3 +66,36 @@ def convolve2D(image, kernel, padding=0, strides=1):
                     break
 
     return output
+
+def generate_gaussian_kernel(sigma):
+    """
+    Generates a Gaussian kernel given the standard deviation (sigma) and the shape of the image.
+    The kernel size is automatically adjusted to ensure it's smaller than the image.
+    """
+    # Generate Gaussian kernel
+    kernel_size = int(2 * np.ceil(3 * sigma) + 1)
+    x = np.linspace(-np.ceil(3 * sigma), np.ceil(3 * sigma), kernel_size)
+    y = np.linspace(-np.ceil(3 * sigma), np.ceil(3 * sigma), kernel_size)
+    x, y = np.meshgrid(x, y)
+    gaussian_kernel = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+    gaussian_kernel /= gaussian_kernel.sum()
+    
+    return gaussian_kernel
+
+def pad_to_match(filter1, filter2):
+    """ Pad the smaller filter to match the size of the larger one """
+    if filter1.shape == filter2.shape:
+        return filter1, filter2
+
+    # Identify the larger and smaller filter
+    larger_filter, smaller_filter = (filter1, filter2) if filter1.size > filter2.size else (filter2, filter1)
+
+    # Calculate the padding required
+    pad_y = (larger_filter.shape[0] - smaller_filter.shape[0] + 1) // 2
+    pad_x = (larger_filter.shape[1] - smaller_filter.shape[1] + 1) // 2
+
+    # Apply symmetric padding
+    smaller_filter_padded = np.pad(smaller_filter, ((pad_y, pad_y), (pad_x, pad_x)), mode='constant', constant_values=0)
+
+    # Return the filters with matched sizes
+    return (smaller_filter_padded, larger_filter) if filter1.size < filter2.size else (larger_filter, smaller_filter_padded)

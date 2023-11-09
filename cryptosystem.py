@@ -18,6 +18,7 @@ n_sq = np.uint64(4161153049)
 lam = np.uint64(32000)
 g = np.uint64(2189576534)
 mu = np.uint64(28964)
+m = np.int64(32253)
 
 def generate_random():
     """
@@ -123,17 +124,26 @@ def fastPowering_matrixBaseAndExponent(g, A, N):
         A = A // 2
     return b
 
+def encode(number):
+    return number % n
+
+def decode(encodedNumber):
+    decodedNumber = encodedNumber
+    if decodedNumber > n // 2: decodedNumber -= n
+    return decodedNumber
+
 def encrypt(plaintext):
     """
     This function encrypts a single plaintext value.
 
     Input:
-    - plaintext: np.uint64
+    - plaintext: np.int64
 
     Output:
     - ciphertext corresponding to the given plaintext.
     """
-    return (fastPowering(g, plaintext, n_sq) * fastPowering(generate_random(), n, n_sq)) % n_sq
+    encodedPlaintext = encode(plaintext)
+    return (fastPowering(g, encodedPlaintext, n_sq) * fastPowering(generate_random(), n, n_sq)) % n_sq
 
 def decrypt(ciphertext):
     """
@@ -145,7 +155,16 @@ def decrypt(ciphertext):
     Output:
     - plaintext corresponding to the given ciphertext.
     """
-    return (((fastPowering(ciphertext, lam, n_sq) - 1) // n) * mu) % n
+    encodedDecryptedText = ((((fastPowering(ciphertext, lam, n_sq) - 1) // n) * mu) % n).astype(np.int64)
+    return decode(encodedDecryptedText)
+
+def encodeImage(image):
+    return (image % n).astype(np.uint64)
+
+def decodeImage(encodedImage):
+    decodedImage = encodedImage.astype(np.int64)
+    decodedImage[decodedImage > n // 2] -= n
+    return decodedImage
 
 def encryptImage(image):
     """
@@ -157,7 +176,8 @@ def encryptImage(image):
     Output:
     - encrypted image corresponding to the given image.
     """
-    return (fastPowering_matrixExponent(g, image, n_sq) * fastPowering(generate_random_tensor(image.shape), n, n_sq)) % n_sq
+    encodedImage = encodeImage(image)
+    return (fastPowering_matrixExponent(g, encodedImage, n_sq) * fastPowering(generate_random_tensor(encodedImage.shape), n, n_sq)) % n_sq
 
 def decryptImage(encryptedImage):
     """
@@ -169,9 +189,40 @@ def decryptImage(encryptedImage):
     Output:
     - Original image corresponding to the given encryptedImage.
     """
-    return (((fastPowering(encryptedImage, lam, n_sq) - 1) // n) * mu) % n
+    encodedDecryptedImage = (((fastPowering(encryptedImage, lam, n_sq) - 1) // n) * mu) % n
+    return decodeImage(encodedDecryptedImage)
 
-def encryptedInnerProduct(tensor1, tensor2):
+def findInverse(a):
+    u = np.ones(a.shape).astype(np.int64)
+    g = a.copy().astype(np.int64)
+    x = np.zeros(a.shape).astype(np.int64)
+    y = np.ones(a.shape).astype(np.int64) * n_sq
+    q = np.zeros(a.shape).astype(np.int64)
+    t = np.zeros(a.shape).astype(np.int64)
+    s = np.zeros(a.shape).astype(np.int64)
+
+    while y.any():
+        mask = (y != 0)
+        q[mask] = g[mask] // y[mask]
+        t[mask] = g[mask] % y[mask]
+        s[mask] = u[mask] - q[mask] * x[mask]
+        u[mask] = x[mask]
+        g[mask] = y[mask]
+        x[mask] = s[mask]
+        y[mask] = t[mask]
+    
+    return (u % n_sq).astype(np.uint64)
+
+def homomorphicScalarMultiplication(c, p):
+    result = np.zeros(c.shape).astype(np.uint64)
+    mask = (p >= n - m)
+    if mask.any():
+        result[mask] = fastPowering_matrixBaseAndExponent(findInverse(c[mask]), (n - p)[mask], n_sq)
+        result[~mask] = fastPowering_matrixBaseAndExponent(c[~mask], p[~mask], n_sq)
+    else: result = fastPowering_matrixBaseAndExponent(c, p, n_sq)
+    return result
+
+def encryptedInnerProduct(encryptedTensor, encodedTensor):
     """
     Computes the inner (dot) product of two encrypted numpy arrays in the ciphertext domain. In the plaintext domain,
     the inner product is computed by multiplying the numpy arrays elementwise, then summing the products.
@@ -184,14 +235,14 @@ def encryptedInnerProduct(tensor1, tensor2):
     Output:
     - A single number of type np.uint64 representing the encrypted inner product of the two numpy arrays
     """
-    terms = fastPowering_matrixBaseAndExponent(tensor1, tensor2, n_sq)
+    terms = homomorphicScalarMultiplication(encryptedTensor, encodedTensor)
     innerProduct = np.uint64(1)
     # Note: A for loop was used instead of np.prod to ensure that no overflow occurs. This creates a slight overhead.
     for term in np.nditer(terms):
         innerProduct = (innerProduct * np.uint64(term)) % n_sq
     return innerProduct
 
-def encryptedConvolve2D(image, kernel, padding=0, strides=1):
+def encryptedConvolve2D(encryptedImage, kernel, padding=0, strides=1):
     """
     Applies a convolution between an encrypted image and a kernel in the ciphertext domain. This is done by
     trying out the possible shifts for the kernel, and for each shift, compute the encryptedInnerProduct between
@@ -208,12 +259,13 @@ def encryptedConvolve2D(image, kernel, padding=0, strides=1):
     """
     # Cross Correlation
     kernel = np.flipud(np.fliplr(kernel))
+    encodedKernel = encodeImage(kernel)
 
     # Gather Shapes of Kernel + Image + Padding
-    xKernShape = kernel.shape[0]
-    yKernShape = kernel.shape[1]
-    xImgShape = image.shape[0]
-    yImgShape = image.shape[1]
+    xKernShape = encodedKernel.shape[0]
+    yKernShape = encodedKernel.shape[1]
+    xImgShape = encryptedImage.shape[0]
+    yImgShape = encryptedImage.shape[1]
 
     # Shape of Output Convolution
     xOutput = int(((xImgShape - xKernShape + 2 * padding) / strides) + 1)
@@ -222,26 +274,27 @@ def encryptedConvolve2D(image, kernel, padding=0, strides=1):
 
     # Apply Equal Padding to All Sides
     if padding != 0:
-        imagePadded = np.zeros((image.shape[0] + padding*2, image.shape[1] + padding*2))
-        imagePadded[int(padding):int(-1 * padding), int(padding):int(-1 * padding)] = image
+        imagePadded = np.pad(encryptedImage, ((padding, padding), (padding, padding)), mode='constant', constant_values=0)
     else:
-        imagePadded = image
-
+        imagePadded = encryptedImage
+    counter = 0
     # Iterate through image
-    for y in range(image.shape[1]):
+    for y in range(imagePadded.shape[1]):
         # Exit Convolution
-        if y > image.shape[1] - yKernShape:
+        if y > imagePadded.shape[1] - yKernShape:
             break
         # Only Convolve if y has gone down by the specified Strides
         if y % strides == 0:
-            for x in range(image.shape[0]):
+            for x in range(imagePadded.shape[0]):
+                print(counter)
+                counter += 1
                 # Go to next row once kernel is out of bounds
-                if x > image.shape[0] - xKernShape:
+                if x > imagePadded.shape[0] - xKernShape:
                     break
                 try:
                     # Only Convolve if x has moved by the specified Strides
                     if x % strides == 0:
-                        output[x, y] = encryptedInnerProduct(imagePadded[x: x + xKernShape, y: y + yKernShape], kernel)
+                        output[x, y] = encryptedInnerProduct(imagePadded[x: x + xKernShape, y: y + yKernShape], encodedKernel)
                 except:
                     break
 
