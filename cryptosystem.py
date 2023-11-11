@@ -2,6 +2,7 @@
 
 import numpy as np
 import random
+from multiprocessing import Pool, cpu_count
 
 """
 The following values for the cryptosystem parameters were specifically chosen so that they would satisfy the conditions
@@ -116,12 +117,17 @@ def fastPowering_matrixBaseAndExponent(g, A, N):
     - A single numpy array of the same shape as the inputs where the output at position (i, j) is equal to
     (g_ij)^(A_ij) (mod N)
     """
-    a = g
-    b = np.ones(A.shape).astype(np.uint64)
-    while(np.sum(A) != 0):
-        b[A % 2 == 1] = (b[A % 2 == 1] * a[A % 2 == 1]) % N
+    a = g.copy()
+    b = np.ones_like(A, dtype=np.uint64)
+    A = A.copy()
+
+    # Use bitwise operations for efficiency
+    while np.any(A != 0):
+        mask = A % 2 == 1
+        b[mask] = (b[mask] * a[mask]) % N
         a = (a * a) % N
-        A = A // 2
+        A >>= 1  # Equivalent to A = A // 2 but more efficient
+
     return b
 
 def encode(number):
@@ -193,25 +199,19 @@ def decryptImage(encryptedImage):
     return decodeImage(encodedDecryptedImage)
 
 def findInverse(a):
-    u = np.ones(a.shape).astype(np.int64)
-    g = a.copy().astype(np.int64)
-    x = np.zeros(a.shape).astype(np.int64)
-    y = np.ones(a.shape).astype(np.int64) * n_sq
-    q = np.zeros(a.shape).astype(np.int64)
-    t = np.zeros(a.shape).astype(np.int64)
-    s = np.zeros(a.shape).astype(np.int64)
+    u = np.ones_like(a, dtype=np.int64)
+    g = a.astype(np.int64)
+    x = np.zeros_like(a, dtype=np.int64)
+    y = np.full_like(a, n_sq, dtype=np.int64)
 
-    while y.any():
-        mask = (y != 0)
-        q[mask] = g[mask] // y[mask]
-        t[mask] = g[mask] % y[mask]
-        s[mask] = u[mask] - q[mask] * x[mask]
-        u[mask] = x[mask]
-        g[mask] = y[mask]
-        x[mask] = s[mask]
-        y[mask] = t[mask]
-    
-    return (u % n_sq).astype(np.uint64)
+    while np.any(y):
+        mask = y != 0
+        q, t = np.divmod(g[mask], y[mask])
+        s = u[mask] - q * x[mask]
+        u[mask], x[mask] = x[mask], s
+        g[mask], y[mask] = y[mask], t
+
+    return np.mod(u, n_sq).astype(np.uint64)
 
 def homomorphicScalarMultiplication(c, p):
     result = np.zeros(c.shape).astype(np.uint64)
@@ -239,63 +239,53 @@ def encryptedInnerProduct(encryptedTensor, encodedTensor):
     innerProduct = np.uint64(1)
     # Note: A for loop was used instead of np.prod to ensure that no overflow occurs. This creates a slight overhead.
     for term in np.nditer(terms):
-        innerProduct = (innerProduct * np.uint64(term)) % n_sq
+        innerProduct = (innerProduct * term) % n_sq
     return innerProduct
 
+def process_segment(args):
+    encryptedImageSegment, encodedKernel, x_start, y_start, xKernShape, yKernShape, strides, padding = args
+    segment_output = np.zeros((encryptedImageSegment.shape[0] - xKernShape + 1, encryptedImageSegment.shape[1] - yKernShape + 1), dtype=np.uint64)
+
+    for x in range(0, encryptedImageSegment.shape[0] - xKernShape + 1, strides):
+        for y in range(0, encryptedImageSegment.shape[1] - yKernShape + 1, strides):
+            conv_value = encryptedInnerProduct(encryptedImageSegment[x: x + xKernShape, y: y + yKernShape], encodedKernel)
+            segment_output[x // strides, y // strides] = conv_value
+
+    return (x_start, y_start, segment_output)
+
 def encryptedConvolve2D(encryptedImage, kernel, padding=0, strides=1):
-    """
-    Applies a convolution between an encrypted image and a kernel in the ciphertext domain. This is done by
-    trying out the possible shifts for the kernel, and for each shift, compute the encryptedInnerProduct between
-    the kernel and a section of the encrypted image.
-
-    Inputs:
-    - Image: A numpy array containing the encrypted image
-    - Kernel: The filter we wish to apply. This value is not encrypted.
-    - Padding: The number of zeros we wish to add in each direction.
-    - Strides: The step size taken when convolving the filter.
-
-    Output:
-    - A numpy array representing the encrypted form of the convolution result
-    """
-    # Cross Correlation
     kernel = np.flipud(np.fliplr(kernel))
     encodedKernel = encodeImage(kernel)
 
-    # Gather Shapes of Kernel + Image + Padding
-    xKernShape = encodedKernel.shape[0]
-    yKernShape = encodedKernel.shape[1]
-    xImgShape = encryptedImage.shape[0]
-    yImgShape = encryptedImage.shape[1]
-
-    # Shape of Output Convolution
+    xKernShape, yKernShape = encodedKernel.shape
+    xImgShape, yImgShape = encryptedImage.shape
     xOutput = int(((xImgShape - xKernShape + 2 * padding) / strides) + 1)
     yOutput = int(((yImgShape - yKernShape + 2 * padding) / strides) + 1)
-    output = np.zeros((xOutput, yOutput)).astype(np.uint64)
+    output = np.zeros((xOutput, yOutput), dtype=np.uint64)
 
-    # Apply Equal Padding to All Sides
-    if padding != 0:
-        imagePadded = np.pad(encryptedImage, ((padding, padding), (padding, padding)), mode='constant', constant_values=0)
-    else:
-        imagePadded = encryptedImage
-    counter = 0
-    # Iterate through image
-    for y in range(imagePadded.shape[1]):
-        # Exit Convolution
-        if y > imagePadded.shape[1] - yKernShape:
-            break
-        # Only Convolve if y has gone down by the specified Strides
-        if y % strides == 0:
-            for x in range(imagePadded.shape[0]):
-                print(counter)
-                counter += 1
-                # Go to next row once kernel is out of bounds
-                if x > imagePadded.shape[0] - xKernShape:
-                    break
-                try:
-                    # Only Convolve if x has moved by the specified Strides
-                    if x % strides == 0:
-                        output[x, y] = encryptedInnerProduct(imagePadded[x: x + xKernShape, y: y + yKernShape], encodedKernel)
-                except:
-                    break
+    imagePadded = np.pad(encryptedImage, ((padding, padding), (padding, padding)), mode='constant', constant_values=0) if padding != 0 else encryptedImage
+
+    # Splitting the image into segments for parallel processing
+    num_processes = cpu_count()
+    # Splitting the image into segments with overlap
+    segment_height = imagePadded.shape[0] // num_processes
+    overlap = xKernShape - 1
+    segments = []
+    for i in range(num_processes):
+        x_start = max(i * segment_height - overlap, 0)
+        x_end = min((i + 1) * segment_height + overlap, imagePadded.shape[0]) if i != num_processes - 1 else imagePadded.shape[0]
+        segment = imagePadded[x_start:x_end, :]
+        segments.append((segment, encodedKernel, x_start, 0, xKernShape, yKernShape, strides, padding))
+
+    # Parallel processing
+    with Pool(num_processes) as pool:
+        results = pool.map(process_segment, segments)
+
+    # Combining results
+    for segment_result in results:
+        x_start, y_start, segment = segment_result
+        for x in range(segment.shape[0]):
+            for y in range(segment.shape[1]):
+                output[x + x_start, y + y_start] = segment[x, y]
 
     return output
