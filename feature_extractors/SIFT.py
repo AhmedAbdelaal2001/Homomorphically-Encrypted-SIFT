@@ -1,9 +1,12 @@
+import sys
+sys.path.append('../utils_plaintextDomain')
+
 from numpy import all, any, array, arctan2, cos, sin, exp, dot, log, logical_and, roll, sqrt, stack, trace, unravel_index, pi, deg2rad, rad2deg, where, zeros, floor, full, nan, isnan, round, float32
 from numpy.linalg import det, lstsq, norm
 from cv2 import resize, GaussianBlur, subtract, KeyPoint, INTER_LINEAR, INTER_NEAREST
 from functools import cmp_to_key
 import logging
-from utils import *
+from utils_plaintextDomain.utils import *
 from scipy.ndimage import zoom
 
 logger = logging.getLogger(__name__)
@@ -66,7 +69,7 @@ def generateDoGFilters(gaussian_kernels):
         first_filter = generate_gaussian_kernel(first_sigma)
         second_filter = generate_gaussian_kernel(second_sigma)
         first_filter, second_filter = pad_to_match(first_filter, second_filter)
-        dog_filter = first_filter - second_filter
+        dog_filter = second_filter - first_filter
         dog_filters.append(dog_filter)
     return dog_filters
 
