@@ -131,12 +131,12 @@ def fastPowering_matrixBaseAndExponent(g, A, N):
     return b
 
 def encode(number):
-    return number % n
+    return np.uint64(number % n)
 
 def decode(encodedNumber):
-    decodedNumber = encodedNumber
+    decodedNumber = np.int64(encodedNumber)
     if decodedNumber > n // 2: decodedNumber -= n
-    return decodedNumber
+    return np.int64(decodedNumber)
 
 def encrypt(plaintext):
     """
@@ -161,7 +161,7 @@ def decrypt(ciphertext):
     Output:
     - plaintext corresponding to the given ciphertext.
     """
-    encodedDecryptedText = ((((fastPowering(ciphertext, lam, n_sq) - 1) // n) * mu) % n).astype(np.int64)
+    encodedDecryptedText = (((fastPowering(ciphertext, lam, n_sq) - 1) // n) * mu) % n
     return decode(encodedDecryptedText)
 
 def encodeImage(image):
@@ -170,7 +170,7 @@ def encodeImage(image):
 def decodeImage(encodedImage):
     decodedImage = encodedImage.astype(np.int64)
     decodedImage[decodedImage > n // 2] -= n
-    return decodedImage
+    return decodedImage.astype(np.int64)
 
 def encryptImage(image):
     """
@@ -199,6 +199,22 @@ def decryptImage(encryptedImage):
     return decodeImage(encodedDecryptedImage)
 
 def findInverse(a):
+    u = 1
+    g = a
+    x = 0
+    y = n_sq
+    while y != 0:
+        q = g // y
+        t = g % y
+        s = u - q * x
+        u = x
+        g = y
+        x = s
+        y = t
+    return np.uint64(u % n_sq)
+
+
+def tensor_findInverse(a):
     u = np.ones_like(a, dtype=np.int64)
     g = a.astype(np.int64)
     x = np.zeros_like(a, dtype=np.int64)

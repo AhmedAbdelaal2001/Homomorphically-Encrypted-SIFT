@@ -1,13 +1,35 @@
 from utils_encryptedDomain.cryptosystem import *
 
-def homomorphicScalarMultiplication(c, p):
-    result = np.zeros(c.shape).astype(np.uint64)
-    mask = (p >= n - m)
+def homomorphicAddition(ciphertext1, ciphertext2):
+    return (ciphertext1 * ciphertext2) % n_sq
+
+def homomorphicScalarMultiplication(ciphertext, scalar):
+    if scalar >= n - m:
+        return fastPowering(findInverse(ciphertext), n - scalar, n_sq)
+    else: 
+        return fastPowering(ciphertext, scalar, n_sq)
+
+def homomorphicSubtraction(ciphertext1, ciphertext2):
+    return homomorphicAddition(ciphertext1, homomorphicScalarMultiplication(ciphertext2, encode(-1)))
+
+#------------------------------------------------------------------------------------------------------
+
+def tensor_homomorphicAddition(tensor_ciphertext1, tensor_ciphertext2):
+    return (tensor_ciphertext1 * tensor_ciphertext2) % n_sq
+
+def tensor_homomorphicScalarMultiplication(tensor_ciphertext, tensor_scalar):
+    result = np.zeros(tensor_ciphertext.shape).astype(np.uint64)
+    mask = (tensor_scalar >= n - m)
     if mask.any():
-        result[mask] = fastPowering_matrixBaseAndExponent(findInverse(c[mask]), (n - p)[mask], n_sq)
-        result[~mask] = fastPowering_matrixBaseAndExponent(c[~mask], p[~mask], n_sq)
-    else: result = fastPowering_matrixBaseAndExponent(c, p, n_sq)
+        result[mask] = fastPowering_matrixBaseAndExponent(tensor_findInverse(tensor_ciphertext[mask]), (n - tensor_scalar)[mask], n_sq)
+        result[~mask] = fastPowering_matrixBaseAndExponent(tensor_ciphertext[~mask], tensor_scalar[~mask], n_sq)
+    else: result = fastPowering_matrixBaseAndExponent(tensor_ciphertext, tensor_scalar, n_sq)
     return result
+
+def tensor_homomorphicSubtraction(tensor_ciphertext1, tensor_ciphertext2):
+    return tensor_homomorphicAddition(tensor_ciphertext1, tensor_homomorphicScalarMultiplication(tensor_ciphertext2, encodeImage(np.full_like(tensor_ciphertext2, -1, dtype=np.int64))))
+
+#--------------------------------------------------------------------------------------------------------
 
 def encryptedInnerProduct(encryptedTensor, encodedTensor):
     """
@@ -22,7 +44,7 @@ def encryptedInnerProduct(encryptedTensor, encodedTensor):
     Output:
     - A single number of type np.uint64 representing the encrypted inner product of the two numpy arrays
     """
-    terms = homomorphicScalarMultiplication(encryptedTensor, encodedTensor)
+    terms = tensor_homomorphicScalarMultiplication(encryptedTensor, encodedTensor)
     innerProduct = np.uint64(1)
     # Note: A for loop was used instead of np.prod to ensure that no overflow occurs. This creates a slight overhead.
     for term in np.nditer(terms):
