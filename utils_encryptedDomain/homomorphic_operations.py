@@ -1,4 +1,5 @@
 from utils_encryptedDomain.cryptosystem import *
+from utils_plaintextDomain.utils import *
 
 def homomorphicAddition(ciphertext1, ciphertext2):
     return (ciphertext1 * ciphertext2) % n_sq
@@ -65,14 +66,16 @@ def process_segment(args):
 def encryptedConvolve2D(encryptedImage, kernel, padding=0, strides=1):
     kernel = np.flipud(np.fliplr(kernel))
     encodedKernel = encodeImage(kernel)
+    return multithreadedConvolution(encryptedImage, encodedKernel, padding, strides)
 
-    xKernShape, yKernShape = encodedKernel.shape
+def multithreadedConvolution(encryptedImage, kernel, padding, strides):
+    xKernShape, yKernShape = kernel.shape
     xImgShape, yImgShape = encryptedImage.shape
     xOutput = int(((xImgShape - xKernShape + 2 * padding) / strides) + 1)
     yOutput = int(((yImgShape - yKernShape + 2 * padding) / strides) + 1)
     output = np.zeros((xOutput, yOutput), dtype=np.uint64)
 
-    imagePadded = np.pad(encryptedImage, ((padding, padding), (padding, padding)), mode='constant', constant_values=1) if padding != 0 else encryptedImage
+    imagePadded = replicate_border(encryptedImage, padding, padding, padding, padding)
 
     # Splitting the image into segments for parallel processing
     num_processes = cpu_count()
@@ -84,7 +87,7 @@ def encryptedConvolve2D(encryptedImage, kernel, padding=0, strides=1):
         x_start = max(i * segment_height - overlap, 0)
         x_end = min((i + 1) * segment_height + overlap, imagePadded.shape[0]) if i != num_processes - 1 else imagePadded.shape[0]
         segment = imagePadded[x_start:x_end, :]
-        segments.append((segment, encodedKernel, x_start, 0, xKernShape, yKernShape, strides, padding))
+        segments.append((segment, kernel, x_start, 0, xKernShape, yKernShape, strides, padding))
 
     # Parallel processing
     with Pool(num_processes) as pool:

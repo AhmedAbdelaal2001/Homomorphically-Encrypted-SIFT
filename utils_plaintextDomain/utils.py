@@ -99,3 +99,51 @@ def pad_to_match(filter1, filter2):
 
     # Return the filters with matched sizes
     return (smaller_filter_padded, larger_filter) if filter1.size < filter2.size else (larger_filter, smaller_filter_padded)
+
+import numpy as np
+
+def remove_zero_rows_columns(tensor):
+    """
+    Remove rows and columns from a numpy array that contain only zeros.
+
+    :param arr: Input numpy array.
+    :return: Numpy array with zero-only rows and columns removed.
+    """
+    # Remove rows and columns that are all zeros
+    non_zero_rows = ~np.all(tensor == 0, axis=1)
+    non_zero_cols = ~np.all(tensor == 0, axis=0)
+    result = tensor[non_zero_rows][:, non_zero_cols]
+
+    return result
+
+def replicate_border(image, top, bottom, left, right):
+    """
+    Manually replicate borders for an image.
+    :param image: Input image (numpy array).
+    :param top, bottom, left, right: Number of pixels to add on each side.
+    :return: Image with replicated borders.
+    """
+    height, width = image.shape[:2]
+
+    # Top border
+    top_border = np.repeat(image[np.newaxis, 0, :], top, axis=0)
+
+    # Bottom border
+    bottom_border = np.repeat(image[np.newaxis, -1, :], bottom, axis=0)
+
+    # Combine top and bottom borders with the original image
+    bordered_image = np.vstack([top_border, image, bottom_border])
+
+    # Update height after adding top and bottom borders
+    new_height = bordered_image.shape[0]
+
+    # Left border
+    left_border = np.repeat(bordered_image[:, np.newaxis, 0], left, axis=1)
+
+    # Right border
+    right_border = np.repeat(bordered_image[:, np.newaxis, -1], right, axis=1)
+
+    # Combine left and right borders
+    bordered_image = np.hstack([left_border, bordered_image, right_border])
+
+    return bordered_image
