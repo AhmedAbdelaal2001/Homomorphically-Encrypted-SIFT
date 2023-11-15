@@ -1,3 +1,7 @@
+import sys,os
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..')) 
+sys.path.append(parent_dir)
+import numpy as np
 from utils_encryptedDomain.cryptosystem import *
 from utils_plaintextDomain.utils import *
 
@@ -12,6 +16,27 @@ def homomorphicScalarMultiplication(ciphertext, scalar):
 
 def homomorphicSubtraction(ciphertext1, ciphertext2):
     return homomorphicAddition(ciphertext1, homomorphicScalarMultiplication(ciphertext2, encode(-1)))
+
+
+def homomorphicComparator(ciphertext1,ciphertext2,greater_than=True):
+    """
+    Compare two ciphertexts.
+    greater_than parameter is used to identify the comparison whether it's greater than or smaller than
+    """
+   
+    result = homomorphicSubtraction(ciphertext1,ciphertext2)
+    result = decrypt(result)
+    if greater_than:
+        if result >= 0:
+            return 1
+        else:
+            return 0
+    else:
+        if result <= 0:
+            return 1
+        else:
+            return 0
+
 
 #------------------------------------------------------------------------------------------------------
 
@@ -29,6 +54,12 @@ def tensor_homomorphicScalarMultiplication(tensor_ciphertext, tensor_scalar):
 
 def tensor_homomorphicSubtraction(tensor_ciphertext1, tensor_ciphertext2):
     return tensor_homomorphicAddition(tensor_ciphertext1, tensor_homomorphicScalarMultiplication(tensor_ciphertext2, encodeImage(np.full_like(tensor_ciphertext2, -1, dtype=np.int64))))
+
+def tensor_homomorphicComparator(ciphertext,tensor_ciphertext,greater_than=True):
+    tensor_ciphertext = tensor_ciphertext.flatten()
+    comparisons = [homomorphicComparator(ciphertext, element,greater_than) == 1 for element in tensor_ciphertext]
+    return all(comparisons)
+
 
 #--------------------------------------------------------------------------------------------------------
 
