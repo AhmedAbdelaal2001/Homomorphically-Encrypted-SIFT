@@ -18,24 +18,6 @@ def homomorphicSubtraction(ciphertext1, ciphertext2):
     return homomorphicAddition(ciphertext1, homomorphicScalarMultiplication(ciphertext2, encode(-1)))
 
 
-def homomorphicComparator(ciphertext1,ciphertext2,greater_than=True):
-    """
-    Compare two ciphertexts.
-    greater_than parameter is used to identify the comparison whether it's greater than or smaller than
-    """
-   
-    result = homomorphicSubtraction(ciphertext1,ciphertext2)
-    result = decrypt(result)
-    if greater_than:
-        if result >= 0:
-            return 1
-        else:
-            return 0
-    else:
-        if result <= 0:
-            return 1
-        else:
-            return 0
 
 
 #------------------------------------------------------------------------------------------------------
@@ -55,10 +37,17 @@ def tensor_homomorphicScalarMultiplication(tensor_ciphertext, tensor_scalar):
 def tensor_homomorphicSubtraction(tensor_ciphertext1, tensor_ciphertext2):
     return tensor_homomorphicAddition(tensor_ciphertext1, tensor_homomorphicScalarMultiplication(tensor_ciphertext2, encodeImage(np.full_like(tensor_ciphertext2, -1, dtype=np.int64))))
 
-def tensor_homomorphicComparator(ciphertext,tensor_ciphertext,greater_than=True):
-    tensor_ciphertext = tensor_ciphertext.flatten()
-    comparisons = [homomorphicComparator(ciphertext, element,greater_than) == 1 for element in tensor_ciphertext]
-    return all(comparisons)
+#First modification
+def tensor_homomorphicComparator(tensor_ciphertext1,tensor_ciphertext2):
+    result = tensor_homomorphicSubtraction(tensor_ciphertext1,tensor_ciphertext2)
+    result = decryptImage(result)
+    num_dimensions = result.ndim
+    all_axes = tuple(range(1,num_dimensions))
+    #greater than, smaller than
+    return np.all(result >= 0, axis=all_axes).astype(int), np.all(result <= 0, axis=all_axes).astype(int)
+   
+
+
 
 
 #--------------------------------------------------------------------------------------------------------
