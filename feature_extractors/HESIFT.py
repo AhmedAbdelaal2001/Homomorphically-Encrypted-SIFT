@@ -13,6 +13,14 @@ from utils_encryptedDomain.homomorphic_operations import *
 logger = logging.getLogger(__name__)
 float_tolerance = 1e-7
 
+def generateBaseImage(image, sigma, assumed_blur):
+    """Generate base image from input image by upsampling by 2 in both directions and blurring
+    """
+    print('Generating base image...')
+    image = resize(image, (0, 0), fx=2, fy=2, interpolation=INTER_LINEAR)
+    sigma_diff = sqrt(max((sigma ** 2) - ((2 * assumed_blur) ** 2), 0.01))
+    return GaussianBlur(image, (0, 0), sigmaX=sigma_diff, sigmaY=sigma_diff)
+
 def generateGaussianKernels(sigma, num_intervals):
     """Generate list of gaussian kernels at which to blur the input image. Default values of sigma, intervals, and octaves follow section 3 of Lowe's paper.
     """
@@ -38,6 +46,7 @@ def generateEncryptedGaussianImages(encryptedImage, num_octaves, gaussian_kernel
         for kernel in gaussian_kernels:
             pad_size = max(kernel.shape) // 2
             gaussian_images_in_octave.append(encryptedConvolve2D(encryptedImage, kernel, padding=pad_size))
+            print("Convolution Done!")
         print(f"Octave {octave_index + 1} Done!!!")
         print("-----------------------------------------------------------------------")
         gaussian_images.append(gaussian_images_in_octave)
@@ -118,7 +127,7 @@ def computeDecryptedGradientAtCenterPixel(pixel_array):
     dx = homomorphicSubtraction(pixel_array[1, 1, 2] , pixel_array[1, 1, 0])
     dy = homomorphicSubtraction(pixel_array[1, 2, 1] , pixel_array[1, 0, 1])
     ds = homomorphicSubtraction(pixel_array[2, 1, 1] , pixel_array[0, 1, 1])
-    return 0.5*decryptImage(array([dx, dy, ds]))
+    return (decryptImage(array([dx, dy, ds]))).astype(np.float32) / 200
 
 
 def computeDecryptedHessianAtCenterPixel(pixel_array):
@@ -132,13 +141,13 @@ def computeDecryptedHessianAtCenterPixel(pixel_array):
     center_pixel_value = pixel_array[1, 1, 1]
     
     
-    dxx = decrypt(homomorphicAddition(homomorphicSubtraction(pixel_array[1, 1, 2],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[1, 1, 0]))
-    dyy = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[1, 2, 1],homomorphicScalarMultiplication(center_pixel_value,2)), pixel_array[1, 0, 1]))
-    dss = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[2, 1, 1],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[0, 1, 1]))
+    dxx = decrypt(homomorphicAddition(homomorphicSubtraction(pixel_array[1, 1, 2],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[1, 1, 0])).astype(np.float32) / 100
+    dyy = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[1, 2, 1],homomorphicScalarMultiplication(center_pixel_value,2)), pixel_array[1, 0, 1])).astype(np.float32) / 100
+    dss = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[2, 1, 1],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[0, 1, 1])).astype(np.float32) / 100
 
-    dxy = 0.25*decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[1, 2, 2],pixel_array[1, 2, 0]),pixel_array[1, 0, 2]),pixel_array[1, 0, 0]))
-    dxs = 0.25*decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 1, 2],pixel_array[2, 1, 0]),pixel_array[0, 1, 2]),pixel_array[0, 1, 0]))
-    dys = 0.25*decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 2, 1],pixel_array[2, 0, 1]),pixel_array[0, 2, 1]), pixel_array[0, 0, 1]))
+    dxy = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[1, 2, 2],pixel_array[1, 2, 0]),pixel_array[1, 0, 2]),pixel_array[1, 0, 0])).astype(np.float32) / 400
+    dxs = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 1, 2],pixel_array[2, 1, 0]),pixel_array[0, 1, 2]),pixel_array[0, 1, 0])).astype(np.float32) / 400
+    dys = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 2, 1],pixel_array[2, 0, 1]),pixel_array[0, 2, 1]), pixel_array[0, 0, 1])).astype(np.float32) / 400
 
     return array([[dxx, dxy, dxs], 
                   [dxy, dyy, dys],
@@ -151,7 +160,7 @@ def computeDecryptedHessianAtCenterPixel(pixel_array):
 def localizeDecryptedExtremumViaQuadraticFit(i, j, image_index, octave_index, num_intervals, dog_images_in_octave, sigma, contrast_threshold, image_border_width, eigenvalue_ratio=10, num_attempts_until_convergence=5):
     """Iteratively refine pixel positions of scale-space extrema via quadratic fit around each extremum's neighbors
     """
-    logger.debug('Localizing scale-space extrema...')
+    print('Localizing scale-space extrema...')
     extremum_is_outside_image = False
     image_shape = dog_images_in_octave[0].shape
     for attempt_index in range(num_attempts_until_convergence):
@@ -201,7 +210,7 @@ def localizeDecryptedExtremumViaQuadraticFit(i, j, image_index, octave_index, nu
 def computeDecryptedKeypointsWithOrientations(keypoint, octave_index, gaussian_image, radius_factor=3, num_bins=36, peak_ratio=0.8, scale_factor=1.5):
     """Compute orientations for each keypoint
     """
-    logger.debug('Computing keypoint orientations...')
+    print('Computing keypoint orientations...')
     keypoints_with_orientations = []
     image_shape = gaussian_image.shape
 
@@ -218,14 +227,11 @@ def computeDecryptedKeypointsWithOrientations(keypoint, octave_index, gaussian_i
                 region_x = int(round(keypoint.pt[0] / float32(2 ** octave_index))) + j
                 if region_x > 0 and region_x < image_shape[1] - 1:
 
-                    dx = decrypt(homomorphicSubtraction(gaussian_image[region_y, region_x + 1],gaussian_image[region_y, region_x - 1]))
-                    dy = decrypt(homomorphicSubtraction(gaussian_image[region_y - 1, region_x],gaussian_image[region_y + 1, region_x]))
+                    dx = decrypt(homomorphicSubtraction(gaussian_image[region_y, region_x + 1],gaussian_image[region_y, region_x - 1])).astype(np.float32) / 100
+                    dy = decrypt(homomorphicSubtraction(gaussian_image[region_y - 1, region_x],gaussian_image[region_y + 1, region_x])).astype(np.float32) / 100
                     
-                    #Awel khazoo2
                     gradient_magnitude = sqrt(dx * dx + dy * dy)
-                    #Tany khazoo2
                     gradient_orientation = rad2deg(arctan2(dy, dx))
-
                     weight = exp(weight_factor * (i ** 2 + j ** 2))  # constant in front of exponential can be dropped because we will find peaks later
                     histogram_index = int(round(gradient_orientation * num_bins / 360.))
                     raw_histogram[histogram_index % num_bins] += weight * gradient_magnitude
@@ -253,7 +259,7 @@ def computeDecryptedKeypointsWithOrientations(keypoint, octave_index, gaussian_i
 def findDecryptedScaleSpaceExtrema(gaussian_images, dog_images, num_intervals, sigma, image_border_width, contrast_threshold=0.04):
     """Find pixel positions of all scale-space extrema in the image pyramid
     """
-    logger.debug('Finding scale-space extrema...')
+    print('Finding scale-space extrema...')
     threshold = floor(0.5 * contrast_threshold / num_intervals * 255)  # from OpenCV implementation
     keypoints = []
 
@@ -291,3 +297,49 @@ def findDecryptedScaleSpaceExtrema(gaussian_images, dog_images, num_intervals, s
                     j = image_border_width
                     i+=1
     return keypoints
+
+def compareKeypoints(keypoint1, keypoint2):
+    """Return True if keypoint1 is less than keypoint2
+    """
+    if keypoint1.pt[0] != keypoint2.pt[0]:
+        return keypoint1.pt[0] - keypoint2.pt[0]
+    if keypoint1.pt[1] != keypoint2.pt[1]:
+        return keypoint1.pt[1] - keypoint2.pt[1]
+    if keypoint1.size != keypoint2.size:
+        return keypoint2.size - keypoint1.size
+    if keypoint1.angle != keypoint2.angle:
+        return keypoint1.angle - keypoint2.angle
+    if keypoint1.response != keypoint2.response:
+        return keypoint2.response - keypoint1.response
+    if keypoint1.octave != keypoint2.octave:
+        return keypoint2.octave - keypoint1.octave
+    return keypoint2.class_id - keypoint1.class_id
+
+def removeDuplicateKeypoints(keypoints):
+    """Sort keypoints and remove duplicate keypoints
+    """
+    if len(keypoints) < 2:
+        return keypoints
+
+    keypoints.sort(key=cmp_to_key(compareKeypoints))
+    unique_keypoints = [keypoints[0]]
+
+    for next_keypoint in keypoints[1:]:
+        last_unique_keypoint = unique_keypoints[-1]
+        if last_unique_keypoint.pt[0] != next_keypoint.pt[0] or \
+           last_unique_keypoint.pt[1] != next_keypoint.pt[1] or \
+           last_unique_keypoint.size != next_keypoint.size or \
+           last_unique_keypoint.angle != next_keypoint.angle:
+            unique_keypoints.append(next_keypoint)
+    return unique_keypoints
+
+def convertKeypointsToInputImageSize(keypoints):
+    """Convert keypoint point, size, and octave to input image size
+    """
+    converted_keypoints = []
+    for keypoint in keypoints:
+        keypoint.pt = tuple(0.5 * array(keypoint.pt))
+        keypoint.size *= 0.5
+        keypoint.octave = (keypoint.octave & ~255) | ((keypoint.octave - 1) & 255)
+        converted_keypoints.append(keypoint)
+    return converted_keypoints
