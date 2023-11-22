@@ -58,14 +58,10 @@ def generateEncryptedDoGImages(gaussian_images):
     """
     print('Generating Difference-of-Gaussian images...')
     dog_images = []
-    octaveIndex = 1
     for gaussian_images_in_octave in gaussian_images:
-        print(f"Octave {octaveIndex} Running:")
         dog_images_in_octave = []
         for first_image, second_image in zip(gaussian_images_in_octave, gaussian_images_in_octave[1:]):
             dog_images_in_octave.append(tensor_homomorphicSubtraction(second_image, first_image))  # ordinary subtraction will not work because the images are unsigned integers
-        print(f"Octave {octaveIndex} Done!!!")
-        print("-----------------------------------------------------------------------")
         dog_images.append(dog_images_in_octave)
     return array(dog_images, dtype=object)
 
