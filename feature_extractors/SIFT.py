@@ -386,83 +386,19 @@ def generateDescriptors(keypoints, gaussian_images, window_width=4, num_bins=8, 
         descriptor_vector[descriptor_vector > 255] = 255
         descriptors.append(descriptor_vector)
     return array(descriptors, dtype='float32')
-"""
-def generateGaussianKernels(sigma, num_intervals):
-    #Generate list of gaussian kernels at which to blur the input image. Default values of sigma, intervals, and octaves follow section 3 of Lowe's paper.
 
-    print('Generating scales...')
-    num_images_per_octave = num_intervals + 3
-    k = 2 ** (1. / num_intervals)
-    gaussian_kernels = zeros(num_images_per_octave)  # scale of gaussian blur necessary to go from one blur scale to the next within an octave
-    gaussian_kernels[0] = sigma
+def SIFT(image):
+    """Compute SIFT keypoints and descriptors for an input image
+    """
+    grayscale_image = (rgb2gray(image) * 255).astype(np.float32)
+    base_image = generateBaseImage(grayscale_image, 2, 0)
+    num_octaves = computeNumberOfOctaves(base_image.shape)
+    gaussian_kernels = generateGaussianSigmas(0.4, 3)
+    gaussian_images = generateGaussianImages(base_image, num_octaves, gaussian_kernels)
+    dog_images = generateDoGImages(gaussian_images)
+    keypoints = findScaleSpaceExtrema(gaussian_images, dog_images, 3, 0.4, 5)
+    keypoints = removeDuplicateKeypoints(keypoints)
+    keypoints = convertKeypointsToInputImageSize(keypoints)
+    descriptors = generateDescriptors(keypoints, gaussian_images)
+    return keypoints, descriptors
 
-    for image_index in range(1, num_images_per_octave):
-        sigma_previous = (k ** (image_index - 1)) * sigma
-        sigma_total = k * sigma_previous
-        gaussian_kernels[image_index] = sqrt(sigma_total ** 2 - sigma_previous ** 2)
-    return gaussian_kernels
-
-def generateGaussianImages(image, num_octaves, gaussian_kernels):
-    #Generate scale-space pyramid of Gaussian images
-    print('Generating Gaussian images...')
-    gaussian_images = []
-    gaussian_kernels_filters = []
-    for sigma in gaussian_kernels:
-        gaussian_kernels_filters.append(generate_gaussian_kernel(sigma))
-
-    for octave in range(num_octaves):
-        gaussian_images_in_octave = [image]  # Start with a copy to avoid modifying the original
-        for filter in gaussian_kernels_filters[1:]:  # Skip the first kernel since the first image is already at that scale
-            pad_size = filter.shape[0] // 2
-            gaussian_images_in_octave.append(convolve2D(image, filter, padding=pad_size).astype(np.float32))
-        gaussian_images.append(gaussian_images_in_octave)
-        
-        # Prepare the next octave
-        octave_base = gaussian_images_in_octave[-3]
-        image = resize(octave_base, (int(octave_base.shape[1] / 2), int(octave_base.shape[0] / 2)), interpolation=INTER_NEAREST)
-
-    return array(gaussian_images, dtype=object)
-
-def generateDoGFilters(gaussian_kernels):
-    #Generate DoG filters from a list of Gaussian kernels 
-    dog_filters = []
-    for first_sigma, second_sigma in zip(gaussian_kernels, gaussian_kernels[1:]):
-        first_filter = generate_gaussian_kernel(first_sigma)
-        second_filter = generate_gaussian_kernel(second_sigma)
-        first_filter, second_filter = pad_to_match(first_filter, second_filter)
-        dog_filter = second_filter - first_filter
-        dog_filters.append(dog_filter)
-    return dog_filters
-
-def generateDoGImages(gaussian_images):
-    #Generate Difference-of-Gaussians image pyramid
-    print('Generating Difference-of-Gaussian images...')
-    dog_images = []
-
-    for gaussian_images_in_octave in gaussian_images:
-        dog_images_in_octave = []
-        for first_image, second_image in zip(gaussian_images_in_octave, gaussian_images_in_octave[1:]):
-            dog_images_in_octave.append(subtract(second_image, first_image))  # ordinary subtraction will not work because the images are unsigned integers
-        dog_images.append(dog_images_in_octave)
-    return array(dog_images, dtype=object)
-
-def generateDoGImagesUsingFilters(image, num_octaves, gaussian_kernels):
-    #Generate scale-space pyramid of DoG images directly
-    print('Generating DoG images using filters...')
-    dog_images = []
-    dog_filters = generateDoGFilters(gaussian_kernels)
-
-    for octave in range(num_octaves):
-        dog_images_in_octave = []
-        for filter in dog_filters:
-            pad_size = filter.shape[0] // 2
-            dog_image = convolve2D(image, filter, padding=pad_size).astype(np.float32)
-            dog_images_in_octave.append(dog_image)
-        dog_images.append(dog_images_in_octave)
-
-        # Prepare the next octave
-        octave_base = dog_images_in_octave[-3]
-        image = zoom(octave_base, 0.5, order=0)
-
-    return np.array(dog_images, dtype=object)
-"""

@@ -448,3 +448,17 @@ def generateDescriptors(keypoints, gaussian_images, window_width=4, num_bins=8, 
         descriptor_vector[descriptor_vector > 255] = 255
         descriptors.append(descriptor_vector)
     return array(descriptors, dtype='float32')
+
+def HESIFT(img):
+    grayscale_image = (rgb2gray(img) * 255).astype(np.float32)
+    baseImage = generateBaseImage(grayscale_image, 2, 0).astype(np.int64)
+    num_octaves = computeNumberOfOctaves(baseImage.shape)
+    gaussian_kernels = generateGaussianKernels(0.4, 3)
+    encryptedBaseImage = encryptImage(baseImage)
+    encryptedGaussianImages = generateEncryptedGaussianImages(encryptedBaseImage, num_octaves, gaussian_kernels)
+    encryptedDOGImages = generateEncryptedDoGImages(encryptedGaussianImages)
+    keypoints_duplicate = findDecryptedScaleSpaceExtrema(encryptedGaussianImages,encryptedDOGImages, 3, 0.4, 5)
+    keypoints = removeDuplicateKeypoints(keypoints_duplicate)
+    keypoints = convertKeypointsToInputImageSize(keypoints)
+    descriptors = generateDescriptors(keypoints, encryptedGaussianImages)
+    return keypoints, descriptors
