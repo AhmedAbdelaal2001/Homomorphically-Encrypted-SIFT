@@ -5,27 +5,24 @@ import numpy as np
 from utils_encryptedDomain.cryptosystem import *
 from utils_plaintextDomain.utils import *
 
-def homomorphicAddition(ciphertext1, ciphertext2):
+def homomorphicAddition(ciphertext1: int, ciphertext2: int) -> int:
     return (ciphertext1 * ciphertext2) % n_sq
 
-def homomorphicScalarMultiplication(ciphertext, scalar):
+def homomorphicScalarMultiplication(ciphertext: int, scalar: int) -> int:
     if scalar >= n - m:
         return fastPowering(findInverse(ciphertext), n - scalar, n_sq)
     else: 
         return fastPowering(ciphertext, scalar, n_sq)
 
-def homomorphicSubtraction(ciphertext1, ciphertext2):
+def homomorphicSubtraction(ciphertext1: int, ciphertext2: int) -> int:
     return homomorphicAddition(ciphertext1, homomorphicScalarMultiplication(ciphertext2, encode(-1)))
-
-
-
 
 #------------------------------------------------------------------------------------------------------
 
-def tensor_homomorphicAddition(tensor_ciphertext1, tensor_ciphertext2):
+def tensor_homomorphicAddition(tensor_ciphertext1: np.ndarray, tensor_ciphertext2: np.ndarray) -> np.ndarray:
     return (tensor_ciphertext1 * tensor_ciphertext2) % n_sq
 
-def tensor_homomorphicScalarMultiplication(tensor_ciphertext, tensor_scalar):
+def tensor_homomorphicScalarMultiplication(tensor_ciphertext: np.ndarray, tensor_scalar: np.ndarray) -> np.ndarray:
     result = np.zeros(tensor_ciphertext.shape).astype(np.uint64)
     mask = (tensor_scalar >= n - m)
     if mask.any():
@@ -34,11 +31,12 @@ def tensor_homomorphicScalarMultiplication(tensor_ciphertext, tensor_scalar):
     else: result = fastPowering_matrixBaseAndExponent(tensor_ciphertext, tensor_scalar, n_sq)
     return result
 
-def tensor_homomorphicSubtraction(tensor_ciphertext1, tensor_ciphertext2):
+def tensor_homomorphicSubtraction(tensor_ciphertext1: np.ndarray, 
+                                  tensor_ciphertext2: np.ndarray) -> np.ndarray:
     return tensor_homomorphicAddition(tensor_ciphertext1, tensor_homomorphicScalarMultiplication(tensor_ciphertext2, encodeImage(np.full_like(tensor_ciphertext2, -1, dtype=np.int64))))
 
-#First modification
-def tensor_homomorphicComparator(tensor_ciphertext1,tensor_ciphertext2):
+
+def tensor_homomorphicComparator(tensor_ciphertext1: np.ndarray,tensor_ciphertext2: np.ndarray) -> int:
     result = tensor_homomorphicSubtraction(tensor_ciphertext1,tensor_ciphertext2)
     result = decryptImage(result)
     num_dimensions = result.ndim
@@ -47,12 +45,9 @@ def tensor_homomorphicComparator(tensor_ciphertext1,tensor_ciphertext2):
     return np.all(result >= 0, axis=all_axes).astype(int), np.all(result <= 0, axis=all_axes).astype(int)
    
 
-
-
-
 #--------------------------------------------------------------------------------------------------------
 
-def encryptedInnerProduct(encryptedTensor, encodedTensor):
+def encryptedInnerProduct(encryptedTensor: np.ndarray, encodedTensor: np.ndarray) -> np.ndarray:
     """
     Computes the inner (dot) product of two encrypted numpy arrays in the ciphertext domain. In the plaintext domain,
     the inner product is computed by multiplying the numpy arrays elementwise, then summing the products.
@@ -83,12 +78,8 @@ def process_segment(args):
 
     return (x_start, y_start, segment_output)
 
-def encryptedConvolve2D(encryptedImage, kernel, padding=0, strides=1):
-    kernel = np.flipud(np.fliplr(kernel))
-    encodedKernel = encodeImage(kernel)
-    return multithreadedConvolution(encryptedImage, encodedKernel, padding, strides)
-
-def multithreadedConvolution(encryptedImage, kernel, padding, strides):
+def multithreadedConvolution(encryptedImage: np.ndarray, kernel: np.ndarray, padding: int, 
+                             strides: int) -> np.ndarray:
     xKernShape, yKernShape = kernel.shape
     xImgShape, yImgShape = encryptedImage.shape
     xOutput = int(((xImgShape - xKernShape + 2 * padding) / strides) + 1)
@@ -121,3 +112,9 @@ def multithreadedConvolution(encryptedImage, kernel, padding, strides):
                 output[x + x_start, y + y_start] = segment[x, y]
 
     return output
+
+def encryptedConvolve2D(encryptedImage: np.ndarray, kernel: np.ndarray, padding: Optional[int] = 0, 
+                        strides: Optional[int] = 1) -> np.ndarray:
+    kernel = np.flipud(np.fliplr(kernel))
+    encodedKernel = encodeImage(kernel)
+    return multithreadedConvolution(encryptedImage, encodedKernel, padding, strides)

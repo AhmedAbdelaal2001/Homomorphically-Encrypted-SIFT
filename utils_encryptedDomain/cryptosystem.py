@@ -3,7 +3,7 @@
 import numpy as np
 import random
 from multiprocessing import Pool, cpu_count
-
+from typing import Tuple, Optional
 """
 The following values for the cryptosystem parameters were specifically chosen so that they would satisfy the conditions
 necessary for the cryptosystem to work, while ensuring that overflows would never happen; by making sure that any
@@ -21,7 +21,7 @@ g = np.uint64(2189576534)
 mu = np.uint64(28964)
 m = np.int64(32253)
 
-def generate_random():
+def generate_random() -> int:
     """
     This function generates a random number r such that 1<r<n and gcd(r,n) == 1.
 
@@ -33,7 +33,7 @@ def generate_random():
         if r % p != 0 and r % q != 0:  # r should be coprime to n
             return r
 
-def generate_random_tensor(shape):
+def generate_random_tensor(shape: Tuple[int, ...]) -> np.ndarray:
     """
     This function is a direct extension to the generate_random() function; it takes in a numpy array shape,
     and generates a numpy array of that shape where every element is a random number r such that 1<r<n and
@@ -60,7 +60,7 @@ def generate_random_tensor(shape):
 
     return r_tensor
 
-def fastPowering(g, A, N):
+def fastPowering(g: np.ndarray, A: int, N: int) -> np.ndarray:
     """
     This function computes g^A (mod N) using the square-and-multiply algorithm, which runs in logarithmic time.
     (remember the algorithm used in the Discrete Mathematics course to calculate modular exponentiations).
@@ -82,7 +82,7 @@ def fastPowering(g, A, N):
         A = A // 2
     return b
 
-def fastPowering_matrixExponent(g, A, N):
+def fastPowering_matrixExponent(g: int, A: np.ndarray, N: int) -> np.ndarray:
     """
     Similar to the previous function, but the base is an integer and the exponent is a numpy array.
 
@@ -102,7 +102,7 @@ def fastPowering_matrixExponent(g, A, N):
         A = A // 2
     return b
 
-def fastPowering_matrixBaseAndExponent(g, A, N):
+def fastPowering_matrixBaseAndExponent(g: np.ndarray, A: np.ndarray, N: int) -> np.ndarray:
     """
     A combination of the previous two functions; this one takes in two numpy array g and A of the same shape,
     as well as an integer N, and computes g ^ A (mod N). This calculation is done elementwise. That is, the output
@@ -130,15 +130,15 @@ def fastPowering_matrixBaseAndExponent(g, A, N):
 
     return b
 
-def encode(number):
+def encode(number: int) -> int:
     return np.uint64(number % n)
 
-def decode(encodedNumber):
+def decode(encodedNumber: int) -> int:
     decodedNumber = np.int64(encodedNumber)
     if decodedNumber > n // 2: decodedNumber -= n
     return np.int64(decodedNumber)
 
-def encrypt(plaintext):
+def encrypt(plaintext: int) -> int:
     """
     This function encrypts a single plaintext value.
 
@@ -151,7 +151,7 @@ def encrypt(plaintext):
     encodedPlaintext = encode(plaintext)
     return (fastPowering(g, encodedPlaintext, n_sq) * fastPowering(generate_random(), n, n_sq)) % n_sq
 
-def decrypt(ciphertext):
+def decrypt(ciphertext: int) -> int:
     """
     This function decrypts a single ciphertext value.
 
@@ -164,15 +164,15 @@ def decrypt(ciphertext):
     encodedDecryptedText = (((fastPowering(ciphertext, lam, n_sq) - 1) // n) * mu) % n
     return decode(encodedDecryptedText)
 
-def encodeImage(image):
+def encodeImage(image: np.ndarray) -> np.ndarray:
     return (image % n).astype(np.uint64)
 
-def decodeImage(encodedImage):
+def decodeImage(encodedImage: np.ndarray) -> np.ndarray:
     decodedImage = encodedImage.astype(np.int64)
     decodedImage[decodedImage > n // 2] -= n
     return decodedImage.astype(np.int64)
 
-def encryptImage(image):
+def encryptImage(image: np.ndarray) -> np.ndarray:
     """
     This function encrypts an entire image, its operations utilize numpy's vectorized operations for maximum efficiency.
 
@@ -185,7 +185,7 @@ def encryptImage(image):
     encodedImage = encodeImage(image)
     return (fastPowering_matrixExponent(g, encodedImage, n_sq) * fastPowering(generate_random_tensor(encodedImage.shape), n, n_sq)) % n_sq
 
-def decryptImage(encryptedImage):
+def decryptImage(encryptedImage: np.ndarray) -> np.ndarray:
     """
     This function decrypts an entire image, its operations utilize numpy's vectorized operations for maximum efficiency.
 
@@ -198,7 +198,7 @@ def decryptImage(encryptedImage):
     encodedDecryptedImage = (((fastPowering(encryptedImage, lam, n_sq) - 1) // n) * mu) % n
     return decodeImage(encodedDecryptedImage)
 
-def findInverse(a):
+def findInverse(a: int) -> int:
     u = 1
     g = a
     x = 0
@@ -214,7 +214,7 @@ def findInverse(a):
     return np.uint64(u % n_sq)
 
 
-def tensor_findInverse(a):
+def tensor_findInverse(a: np.ndarray) -> np.ndarray:
     u = np.ones_like(a, dtype=np.int64)
     g = a.astype(np.int64)
     x = np.zeros_like(a, dtype=np.int64)

@@ -8,7 +8,9 @@ from skimage.util import random_noise
 from skimage.exposure import histogram
 from matplotlib.pyplot import bar
 
-def show_images(images,titles=None):
+from typing import List, Optional, Tuple
+
+def show_images(images: List[np.ndarray], titles: Optional[List[str]] = None):
     #This function is used to show image(s) with titles by sending an array of images and an array of associated titles.
     # images[0] will be drawn with the title titles[0] if exists
     # You aren't required to understand this function, use it as-is.
@@ -26,7 +28,8 @@ def show_images(images,titles=None):
     fig.set_size_inches(np.array(fig.get_size_inches()) * n_ims)
     plt.show()
 
-def convolve2D(image, kernel, padding=0, strides=1):
+def convolve2D(image: np.ndarray, kernel: np.ndarray, padding: Optional[int] = 0, 
+               strides: Optional[int] = 1) -> np.ndarray:
     # Cross Correlation
     kernel = np.flipud(np.fliplr(kernel))
 
@@ -67,7 +70,7 @@ def convolve2D(image, kernel, padding=0, strides=1):
 
     return output
 
-def generate_gaussian_kernel(sigma):
+def generate_gaussian_kernel(sigma: int) -> np.ndarray:
     """
     Generates a Gaussian kernel given the standard deviation (sigma) and the shape of the image.
     The kernel size is automatically adjusted to ensure it's smaller than the image.
@@ -82,7 +85,7 @@ def generate_gaussian_kernel(sigma):
     
     return gaussian_kernel
 
-def pad_to_match(filter1, filter2):
+def pad_to_match(filter1: np.ndarray, filter2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """ Pad the smaller filter to match the size of the larger one """
     if filter1.shape == filter2.shape:
         return filter1, filter2
@@ -102,7 +105,7 @@ def pad_to_match(filter1, filter2):
 
 import numpy as np
 
-def remove_zero_rows_columns(tensor):
+def remove_zero_rows_columns(tensor: np.ndarray) -> np.ndarray:
     """
     Remove rows and columns from a numpy array that contain only zeros.
 
@@ -116,7 +119,7 @@ def remove_zero_rows_columns(tensor):
 
     return result
 
-def replicate_border(image, top, bottom, left, right):
+def replicate_border(image: np.ndarray, top: int, bottom: int, left: int, right: int) -> np.ndarray:
     """
     Manually replicate borders for an image.
     :param image: Input image (numpy array).

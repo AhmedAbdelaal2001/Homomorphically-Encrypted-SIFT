@@ -6,460 +6,825 @@ from numpy.linalg import det, lstsq, norm
 from cv2 import resize, GaussianBlur, subtract, KeyPoint, INTER_LINEAR, INTER_NEAREST
 from functools import cmp_to_key
 import logging
-from feature_extractors.SIFT import *
 from utils_encryptedDomain.cryptosystem import *
 from utils_encryptedDomain.homomorphic_operations import *
+from scipy.ndimage import zoom
 
 logger = logging.getLogger(__name__)
 float_tolerance = 1e-7
 
-def generateBaseImage(image, sigma, assumed_blur):
-    """Generate base image from input image by upsampling by 2 in both directions and blurring
+def prepareInitialHESIFTImage(input_image: np.ndarray, initial_sigma: float, initial_blur: float) -> np.ndarray:
     """
-    print('Generating base image...')
-    image = resize(image, (0, 0), fx=2, fy=2, interpolation=INTER_LINEAR)
-    sigma_diff = sqrt(max((sigma ** 2) - ((2 * assumed_blur) ** 2), 0.01))
-    return GaussianBlur(image, (0, 0), sigmaX=sigma_diff, sigmaY=sigma_diff)
+    Prepare the initial image for SIFT processing by upsampling and applying Gaussian blur.
+    
+    Args:
+    input_image (np.ndarray): The image to be processed.
+    initial_sigma (float): The standard deviation for the Gaussian kernel.
+    initial_blur (float): The assumed initial blur in the image.
 
-def generateGaussianKernels(sigma, num_intervals):
-    """Generate list of gaussian kernels at which to blur the input image. Default values of sigma, intervals, and octaves follow section 3 of Lowe's paper.
+    Returns:
+    np.ndarray: The processed image after upsampling and blurring.
     """
-    print('Generating Gaussian Kernels...')
-    num_images_per_octave = num_intervals + 3
-    k = 2 ** (1. / num_intervals)
-    gaussian_kernels = []  # scale of gaussian blur necessary to go from one blur scale to the next within an octave
 
-    for image_index in range(0, num_images_per_octave):
-        gaussian_kernels.append(remove_zero_rows_columns((100 * generate_gaussian_kernel(sigma)).astype(np.int64)))
-        sigma *= k
-    return gaussian_kernels
+    # Log the start of the base image generation process
+    print('Preparing initial HESIFT image...')
 
-def generateEncryptedGaussianImages(encryptedImage, num_octaves, gaussian_kernels):
-    """Generate scale-space pyramid of Gaussian images
+    # Upsample the input image by a factor of 2 both horizontally and vertically
+    # INTER_LINEAR interpolation is used for resizing
+    upsampled_image = resize(input_image, (0, 0), fx=2, fy=2, interpolation=INTER_LINEAR)
+
+    # Calculate the net effective sigma needed for Gaussian blurring
+    # It's computed based on the desired sigma and the assumed initial blur
+    effective_sigma = sqrt(max((initial_sigma ** 2) - ((2 * initial_blur) ** 2), 0.01))
+
+    # Apply Gaussian blur to the upsampled image with the calculated effective sigma
+    # This step adds the necessary blur to make the image scale-invariant
+    blurred_image = GaussianBlur(upsampled_image, (0, 0), sigmaX=effective_sigma, sigmaY=effective_sigma)
+
+    return blurred_image
+
+def computeNumberOfOctaves(image_shape: Tuple[int, ...]) -> int:
+    """Compute number of octaves in image pyramid as function of base image shape (OpenCV default)
     """
-    print('Generating Gaussian images...')
-    gaussian_images = []
+    return int(round(log(min(image_shape)) / log(2) - 1))
 
-    for octave_index in range(num_octaves):
-        print(f"Octave {octave_index + 1} Running:")
-        gaussian_images_in_octave = []
-        for kernel in gaussian_kernels:
-            pad_size = max(kernel.shape) // 2
-            gaussian_images_in_octave.append(encryptedConvolve2D(encryptedImage, kernel, padding=pad_size))
+
+def createGaussianBlurKernels(initial_sigma: float, intervals_per_octave: int) -> List[np.ndarray]:
+    """
+    Create a series of Gaussian blur kernels for different scales.
+
+    Args:
+    initial_sigma (float): The initial standard deviation for the Gaussian blur.
+    intervals_per_octave (int): The number of intervals per octave in the scale space.
+
+    Returns:
+    List[np.ndarray]: A list of Gaussian kernels for different blur levels.
+    """
+
+    # Log the start of Gaussian kernel generation
+    print('Creating Gaussian Blur Kernels...')
+
+    # Determine the total number of images per octave including the initial three
+    total_images_per_octave = intervals_per_octave + 3
+
+    # Calculate the constant multiplicative factor k
+    k_multiplier = 2 ** (1.0 / intervals_per_octave)
+
+    # Initialize an empty list to store the Gaussian kernels
+    blur_kernels = []
+
+    # Iterate over each image index in the octave
+    for index in range(total_images_per_octave):
+        # Generate a Gaussian kernel and scale it up by 100
+        # Convert the result to integer for compatibility with homomorphic operations
+        scaled_kernel = remove_zero_rows_columns((100 * generate_gaussian_kernel(initial_sigma)).astype(np.int64))
+
+        # Append the scaled kernel to the list
+        blur_kernels.append(scaled_kernel)
+
+        # Update the sigma value for the next kernel
+        initial_sigma *= k_multiplier
+
+    return blur_kernels
+
+
+def createScaleSpacePyramid(encrypted_img: np.ndarray, octave_count: int, blur_kernels: List[np.ndarray]) -> np.ndarray:
+    """
+    Generate a scale-space pyramid of Gaussian-blurred images in an encrypted domain.
+
+    Args:
+    encrypted_img (np.ndarray): The encrypted image to be processed.
+    octave_count (int): The number of octaves to generate in the scale space.
+    blur_kernels (List[np.ndarray]): List of Gaussian kernels for blurring.
+
+    Returns:
+    np.ndarray: A scale-space pyramid of Gaussian-blurred images.
+    """
+
+    # Log the start of the Gaussian image generation
+    print('Creating Scale-Space Pyramid...')
+
+    # Initialize an empty list to store the Gaussian images for each octave
+    scale_space_images = []
+
+    # Iterate over each octave
+    for octave in range(octave_count):
+        print(f"Processing Octave {octave + 1}:")
+
+        # Initialize an empty list to store Gaussian images for the current octave
+        images_in_current_octave = []
+
+        # Iterate over each Gaussian kernel
+        for kernel in blur_kernels:
+            # Calculate padding size for the convolution
+            padding_size = max(kernel.shape) // 2
+
+            # Apply encrypted convolution and add the result to the octave's image list
+            blurred_image = encryptedConvolve2D(encrypted_img, kernel, padding=padding_size)
+            images_in_current_octave.append(blurred_image)
             print("Convolution Done!")
-        print(f"Octave {octave_index + 1} Done!!!")
+
+        # Add the octave's Gaussian images to the scale space list
+        print(f"Octave {octave + 1} Completed!")
         print("-----------------------------------------------------------------------")
-        gaussian_images.append(gaussian_images_in_octave)
-        encryptedImage = zoom(encryptedImage, 0.5, order=0)
-    return array(gaussian_images, dtype=object)
+        scale_space_images.append(images_in_current_octave)
 
-def generateEncryptedDoGImages(gaussian_images):
-    """Generate Difference-of-Gaussians image pyramid
+        # Downsample the image by a factor of 2 for the next octave
+        encrypted_img = zoom(encrypted_img, 0.5, order=0)
+
+    # Convert the list of images to a NumPy array for easier handling
+    return array(scale_space_images, dtype=object)
+
+
+def createEncryptedDoGPyramid(blurred_images: List[List[np.ndarray]]) -> np.ndarray:
     """
-    print('Generating Difference-of-Gaussian images...')
-    dog_images = []
-    for gaussian_images_in_octave in gaussian_images:
-        dog_images_in_octave = []
-        for first_image, second_image in zip(gaussian_images_in_octave, gaussian_images_in_octave[1:]):
-            dog_images_in_octave.append(tensor_homomorphicSubtraction(second_image, first_image))  # ordinary subtraction will not work because the images are unsigned integers
-        dog_images.append(dog_images_in_octave)
-    return array(dog_images, dtype=object)
+    Create a Difference-of-Gaussians (DoG) image pyramid from Gaussian-blurred images in an encrypted domain.
 
-"""
-def encrypted_generateDoGImagesUsingFilters(encryptedImage, num_octaves, gaussian_kernels):
-    #Generate scale-space pyramid of DoG images directly
-    print('Generating DoG images using filters...')
-    dog_images = []
-    dog_filters = generateDoGFilters(gaussian_kernels)
-    for i in range(len(dog_filters)):
-        dog_filters[i] = (100 * dog_filters[i]).astype(np.int64)
+    Args:
+    blurred_images (List[List[np.ndarray]]): A list of lists containing Gaussian-blurred images at different scales.
 
-    for octave in range(num_octaves):
-        dog_images_in_octave = []
-        for filter in dog_filters:
-            pad_size = filter.shape[0] // 2
-            dog_image = encryptedConvolve2D(encryptedImage, filter, padding=pad_size)
-            print("convolution done")
-            dog_images_in_octave.append(dog_image)
-        dog_images.append(dog_images_in_octave)
-
-        # Prepare the next octave
-        octave_base = dog_images_in_octave[-3]
-        image = zoom(octave_base, 0.5, order=0)
-        print(octave)
-
-    return np.array(dog_images, dtype=object)
-"""
-
-
-
-def isEncryptedPixelAnExtremum(tensor_center_pixels,tensor_neighbor_pixels):
-
-    local_maxima,local_minima = tensor_homomorphicComparator(tensor_center_pixels,tensor_neighbor_pixels)
-    return local_maxima+local_minima
-
-
-# def isEncryptedPixelAnExtremum(first_subimage, second_subimage, third_subimage, threshold):
-#     """Return True if the center element of the 3x3x3 input array is strictly greater than or less than all its neighbors, False otherwise
-#     """
-#     center_pixel_value = second_subimage[1, 1]
-#     tensor_center_pixel = np.full((3,3),center_pixel_value)
-#     tensor_neighbor_pixels = np.array([first_subimage,second_subimage,third_subimage])
-#     if center_pixel_value > threshold:
-#             local_maxima = tensor_homomorphicComparator(tensor_center_pixel,tensor_neighbor_pixels)
-#             if not local_maxima:
-#                 return tensor_homomorphicComparator(tensor_center_pixel,tensor_neighbor_pixels,False)
-#             return local_maxima
-
-#     return False
-
-
-def computeDecryptedGradientAtCenterPixel(pixel_array):
-    """Approximate gradient at center pixel [1, 1, 1] of 3x3x3 array using central difference formula of order O(h^2), where h is the step size
+    Returns:
+    np.ndarray: A pyramid of DoG images.
     """
-    # With step size h, the central difference formula of order O(h^2) for f'(x) is (f(x + h) - f(x - h)) / (2 * h)
-    # Here h = 1, so the formula simplifies to f'(x) = (f(x + 1) - f(x - 1)) / 2
-    # NOTE: x corresponds to second array axis, y corresponds to first array axis, and s (scale) corresponds to third array axis
-    dx = homomorphicSubtraction(pixel_array[1, 1, 2] , pixel_array[1, 1, 0])
-    dy = homomorphicSubtraction(pixel_array[1, 2, 1] , pixel_array[1, 0, 1])
-    ds = homomorphicSubtraction(pixel_array[2, 1, 1] , pixel_array[0, 1, 1])
-    return (decryptImage(array([dx, dy, ds]))).astype(np.float32) / 200
+
+    # Log the start of DoG image generation
+    print('Creating Encrypted DoG Image Pyramid...')
+
+    # Initialize an empty list to store the DoG images for all octaves
+    dog_image_pyramid = []
+
+    # Iterate over each octave in the blurred images
+    for images_in_octave in blurred_images:
+        # Initialize an empty list to store the DoG images for the current octave
+        dog_images_current_octave = []
+
+        # Iterate over each pair of adjacent Gaussian-blurred images
+        for first_blurred_image, second_blurred_image in zip(images_in_octave, images_in_octave[1:]):
+            # Calculate the DoG image by subtracting the first image from the second
+            # Use homomorphic subtraction to handle encrypted images
+            dog_image = tensor_homomorphicSubtraction(second_blurred_image, first_blurred_image)
+            dog_images_current_octave.append(dog_image)
+
+        # Add the octave's DoG images to the pyramid
+        dog_image_pyramid.append(dog_images_current_octave)
+
+    # Convert the list of DoG images to a NumPy array for easier handling
+    return array(dog_image_pyramid, dtype=object)
 
 
-def computeDecryptedHessianAtCenterPixel(pixel_array):
-    """Approximate Hessian at center pixel [1, 1, 1] of 3x3x3 array using central difference formula of order O(h^2), where h is the step size
+def checkEncryptedPixelExtremum(central_pixel_tensor: np.ndarray, neighbor_pixel_tensor: np.ndarray) -> int:
     """
-    # With step size h, the central difference formula of order O(h^2) for f''(x) is (f(x + h) - 2 * f(x) + f(x - h)) / (h ^ 2)
-    # Here h = 1, so the formula simplifies to f''(x) = f(x + 1) - 2 * f(x) + f(x - 1)
-    # With step size h, the central difference formula of order O(h^2) for (d^2) f(x, y) / (dx dy) = (f(x + h, y + h) - f(x + h, y - h) - f(x - h, y + h) + f(x - h, y - h)) / (4 * h ^ 2)
-    # Here h = 1, so the formula simplifies to (d^2) f(x, y) / (dx dy) = (f(x + 1, y + 1) - f(x + 1, y - 1) - f(x - 1, y + 1) + f(x - 1, y - 1)) / 4
-    # NOTE: x corresponds to second array axis, y corresponds to first array axis, and s (scale) corresponds to third array axis
-    center_pixel_value = pixel_array[1, 1, 1]
+    Check whether a given pixel in an encrypted image is an extremum (maximum or minimum) compared to its neighbors.
+
+    Args:
+    central_pixel_tensor (np.ndarray): The encrypted value of the central pixel.
+    neighbor_pixel_tensor (np.ndarray): The encrypted values of the neighboring pixels.
+
+    Returns:
+    int: > 0 if the central pixel is an extremum, 0 otherwise.
+    """
+
+    # Compare the central pixel to its neighbors using homomorphic operations
+    # This will determine if the central pixel is a local maximum or minimum
+    is_local_max, is_local_min = tensor_homomorphicComparator(central_pixel_tensor, neighbor_pixel_tensor)
+
+    # Return True if the pixel is either a local maximum or minimum
+    return is_local_max + is_local_min
+
+
+
+def calculateDecryptedImageGradient(center_pixel_matrix: np.ndarray) -> np.ndarray:
+    """
+    Calculate the gradient at the center pixel of a 3x3x3 array in an encrypted image using the central difference formula.
+
+    Args:
+    center_pixel_matrix (np.ndarray): A 3x3x3 array representing a portion of an encrypted image.
+
+    Returns:
+    np.ndarray: The decrypted gradient vector at the center pixel.
+    """
+
+    # Calculate the gradient in the x-direction (horizontal)
+    # Using central difference: (f(x + 1) - f(x - 1)) / 2
+    gradient_x = homomorphicSubtraction(center_pixel_matrix[1, 1, 2], center_pixel_matrix[1, 1, 0])
+
+    # Calculate the gradient in the y-direction (vertical)
+    gradient_y = homomorphicSubtraction(center_pixel_matrix[1, 2, 1], center_pixel_matrix[1, 0, 1])
+
+    # Calculate the gradient in the s-direction (scale)
+    gradient_scale = homomorphicSubtraction(center_pixel_matrix[2, 1, 1], center_pixel_matrix[0, 1, 1])
+
+    # Decrypt the gradient vector and scale it down
+    decrypted_gradient = decryptImage(array([gradient_x, gradient_y, gradient_scale])).astype(np.float32) / 200
+
+    return decrypted_gradient
+
+
+
+def calculateDecryptedHessianMatrix(encrypted_pixel_block: np.ndarray) -> np.ndarray:
+    """
+    Calculate the Hessian matrix at the center pixel of a 3x3x3 array in an encrypted image using the central difference formula.
+
+    Args:
+    encrypted_pixel_block (np.ndarray): A 3x3x3 array representing a portion of an encrypted image.
+
+    Returns:
+    np.ndarray: The decrypted Hessian matrix at the center pixel.
+    """
+
+    # Define the center pixel value for reference in calculations
+    center_pixel = encrypted_pixel_block[1, 1, 1]
     
-    
-    dxx = decrypt(homomorphicAddition(homomorphicSubtraction(pixel_array[1, 1, 2],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[1, 1, 0])).astype(np.float32) / 100
-    dyy = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[1, 2, 1],homomorphicScalarMultiplication(center_pixel_value,2)), pixel_array[1, 0, 1])).astype(np.float32) / 100
-    dss = decrypt(homomorphicAddition(homomorphicSubtraction (pixel_array[2, 1, 1],homomorphicScalarMultiplication(center_pixel_value,2)),pixel_array[0, 1, 1])).astype(np.float32) / 100
+    # Calculate second-order derivatives using the central difference formula
+    # For x, y, and scale (s) directions
+    second_derivative_xx = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(encrypted_pixel_block[1, 1, 2], 
+                                   homomorphicScalarMultiplication(center_pixel, 2)),
+            encrypted_pixel_block[1, 1, 0])
+    ).astype(np.float32) / 100
 
-    dxy = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[1, 2, 2],pixel_array[1, 2, 0]),pixel_array[1, 0, 2]),pixel_array[1, 0, 0])).astype(np.float32) / 400
-    dxs = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 1, 2],pixel_array[2, 1, 0]),pixel_array[0, 1, 2]),pixel_array[0, 1, 0])).astype(np.float32) / 400
-    dys = decrypt(homomorphicAddition(homomorphicSubtraction(homomorphicSubtraction(pixel_array[2, 2, 1],pixel_array[2, 0, 1]),pixel_array[0, 2, 1]), pixel_array[0, 0, 1])).astype(np.float32) / 400
+    second_derivative_yy = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(encrypted_pixel_block[1, 2, 1], 
+                                   homomorphicScalarMultiplication(center_pixel, 2)),
+            encrypted_pixel_block[1, 0, 1])
+    ).astype(np.float32) / 100
 
-    return array([[dxx, dxy, dxs], 
-                  [dxy, dyy, dys],
-                  [dxs, dys, dss]])
+    second_derivative_ss = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(encrypted_pixel_block[2, 1, 1], 
+                                   homomorphicScalarMultiplication(center_pixel, 2)),
+            encrypted_pixel_block[0, 1, 1])
+    ).astype(np.float32) / 100
+
+    # Calculate mixed derivatives (cross-terms)
+    mixed_derivative_xy = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(
+                homomorphicSubtraction(encrypted_pixel_block[1, 2, 2], encrypted_pixel_block[1, 2, 0]),
+                encrypted_pixel_block[1, 0, 2]),
+            encrypted_pixel_block[1, 0, 0])
+    ).astype(np.float32) / 400
+
+    mixed_derivative_xs = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(
+                homomorphicSubtraction(encrypted_pixel_block[2, 1, 2], encrypted_pixel_block[2, 1, 0]),
+                encrypted_pixel_block[0, 1, 2]),
+            encrypted_pixel_block[0, 1, 0])
+    ).astype(np.float32) / 400
+
+    mixed_derivative_ys = decrypt(
+        homomorphicAddition(
+            homomorphicSubtraction(
+                homomorphicSubtraction(encrypted_pixel_block[2, 2, 1], encrypted_pixel_block[2, 0, 1]),
+                encrypted_pixel_block[0, 2, 1]),
+            encrypted_pixel_block[0, 0, 1])
+    ).astype(np.float32) / 400
+
+    # Construct and return the Hessian matrix
+    return array([[second_derivative_xx, mixed_derivative_xy, mixed_derivative_xs], 
+                  [mixed_derivative_xy, second_derivative_yy, mixed_derivative_ys],
+                  [mixed_derivative_xs, mixed_derivative_ys, second_derivative_ss]])
 
 
 
 
 
-def localizeDecryptedExtremumViaQuadraticFit(i, j, image_index, octave_index, num_intervals, dog_images_in_octave, sigma, contrast_threshold, image_border_width, eigenvalue_ratio=10, num_attempts_until_convergence=5):
-    """Iteratively refine pixel positions of scale-space extrema via quadratic fit around each extremum's neighbors
+
+def refineExtremumPositionInScaleSpace(row: int, col: int, img_idx: int, octave_lvl: int, intervals: int, 
+                                       dog_octave_imgs: List[np.ndarray], blur_sigma: float, threshold: float,
+                                       border_width: int, eigen_ratio: Optional[float] = 10, 
+                                       max_attempts: Optional[int] = 5) -> Tuple[KeyPoint, int]:
     """
-    print('Localizing scale-space extrema...')
-    extremum_is_outside_image = False
-    image_shape = dog_images_in_octave[0].shape
-    for attempt_index in range(num_attempts_until_convergence):
-        first_image, second_image, third_image = dog_images_in_octave[image_index-1:image_index+2]
-        pixel_cube = stack([first_image[i-1:i+2, j-1:j+2],
-                            second_image[i-1:i+2, j-1:j+2],
-                            third_image[i-1:i+2, j-1:j+2]])
-        
-        gradient = computeDecryptedGradientAtCenterPixel(pixel_cube)
-        hessian = computeDecryptedHessianAtCenterPixel(pixel_cube)
+    Iteratively refine the position of scale-space extrema using a quadratic fitting approach.
 
-        extremum_update = -lstsq(hessian, gradient, rcond=None)[0]
+    Args:
+    row, col (int): Initial row and column indices of the extremum.
+    img_idx (int): Index of the image in the octave.
+    octave_lvl (int): Current octave level.
+    intervals (int): Number of intervals in the scale space.
+    dog_octave_imgs (List[np.ndarray]): DoG images in the current octave.
+    blur_sigma (float): Sigma value used for blurring.
+    threshold (float): Contrast threshold for feature rejection.
+    border_width (int): Width of the image border to avoid.
+    eigen_ratio (float): Ratio for edge response elimination.
+    max_attempts (int): Maximum number of attempts for convergence.
 
-        if abs(extremum_update[0]) < 0.5 and abs(extremum_update[1]) < 0.5 and abs(extremum_update[2]) < 0.5:
+    Returns:
+    tuple or None: Returns a tuple containing the refined KeyPoint object and its image index if successful, else None.
+    """
+
+    print('Refining extremum position in scale-space...')
+
+    # Flag to check if extremum goes outside the image boundary
+    is_extremum_outside = False
+    img_dimensions = dog_octave_imgs[0].shape
+
+    # Iteratively refine the extremum position
+    for attempt in range(max_attempts):
+        # Extract the images around the current index
+        prev_img, current_img, next_img = dog_octave_imgs[img_idx-1:img_idx+2]
+
+        # Construct a 3x3x3 pixel block around the extremum
+        pixel_block = stack([prev_img[row-1:row+2, col-1:col+2],
+                             current_img[row-1:row+2, col-1:col+2],
+                             next_img[row-1:row+2, col-1:col+2]])
+
+        # Compute gradient and Hessian at the central pixel
+        gradient_vector = calculateDecryptedImageGradient(pixel_block)
+        hessian_matrix = calculateDecryptedHessianMatrix(pixel_block)
+
+        # Calculate extremum update using least squares solution
+        extremum_shift = -lstsq(hessian_matrix, gradient_vector, rcond=None)[0]
+
+        # Check if update is small enough to stop
+        if all(abs(extremum_shift) < 0.5):
             break
-        j += int(round(extremum_update[0]))
-        i += int(round(extremum_update[1]))
-        image_index += int(round(extremum_update[2]))
-        # make sure the new pixel_cube will lie entirely within the image
-        if i < image_border_width or i >= image_shape[0] - image_border_width or j < image_border_width or j >= image_shape[1] - image_border_width or image_index < 1 or image_index > num_intervals:
-            extremum_is_outside_image = True
-            break
-    if extremum_is_outside_image:
-       
-        return None
-    if attempt_index >= num_attempts_until_convergence - 1:
-       
-        return None
-    
-    functionValueAtUpdatedExtremum = decrypt(pixel_cube[1, 1, 1]) + 0.5 * dot(gradient, extremum_update)
 
-    if abs(functionValueAtUpdatedExtremum) * num_intervals >= contrast_threshold:
-        xy_hessian = hessian[:2, :2]
-        xy_hessian_trace = trace(xy_hessian)
-        xy_hessian_det = det(xy_hessian)
-        if xy_hessian_det > 0 and eigenvalue_ratio * (xy_hessian_trace ** 2) < ((eigenvalue_ratio + 1) ** 2) * xy_hessian_det:
-            # Contrast check passed -- construct and return OpenCV KeyPoint object
+        # Update the extremum position
+        col += int(round(extremum_shift[0]))
+        row += int(round(extremum_shift[1]))
+        img_idx += int(round(extremum_shift[2]))
+
+        # Check if the new position is within the image boundaries
+        if not (border_width <= row < img_dimensions[0] - border_width and
+                border_width <= col < img_dimensions[1] - border_width and
+                1 <= img_idx <= intervals):
+            is_extremum_outside = True
+            break
+
+    # Return None if extremum is outside or didn't converge
+    if is_extremum_outside or attempt >= max_attempts - 1:
+        return None
+
+    # Evaluate the function value at the updated extremum position
+    updated_value = decrypt(pixel_block[1, 1, 1]) + 0.5 * dot(gradient_vector, extremum_shift)
+
+    # Apply contrast threshold check
+    if abs(updated_value) * intervals >= threshold:
+        # Compute Hessian's trace and determinant for edge response check
+        xy_hessian = hessian_matrix[:2, :2]
+        trace_hessian = trace(xy_hessian)
+        determinant_hessian = det(xy_hessian)
+
+        # Edge response elimination check
+        if determinant_hessian > 0 and eigen_ratio * (trace_hessian ** 2) < ((eigen_ratio + 1) ** 2) * determinant_hessian:
+            # Construct and return a KeyPoint object
             keypoint = KeyPoint()
-            keypoint.pt = ((j + extremum_update[0]) * (2 ** octave_index), (i + extremum_update[1]) * (2 ** octave_index))
-            keypoint.octave = octave_index + image_index * (2 ** 8) + int(round((extremum_update[2] + 0.5) * 255)) * (2 ** 16)
-            keypoint.size = sigma * (2 ** ((image_index + extremum_update[2]) / float32(num_intervals))) * (2 ** (octave_index + 1))  # octave_index + 1 because the input image was doubled
-            keypoint.response = abs(functionValueAtUpdatedExtremum)
-            return keypoint, image_index
+            keypoint.pt = ((col + extremum_shift[0]) * (2 ** octave_lvl), (row + extremum_shift[1]) * (2 ** octave_lvl))
+            keypoint.octave = octave_lvl + img_idx * (2 ** 8) + int(round((extremum_shift[2] + 0.5) * 255)) * (2 ** 16)
+            keypoint.size = blur_sigma * (2 ** ((img_idx + extremum_shift[2]) / float32(intervals))) * (2 ** (octave_lvl + 1))
+            keypoint.response = abs(updated_value)
+            return keypoint, img_idx
+
     return None
 
 
-def computeDecryptedKeypointsWithOrientations(keypoint, octave_index, gaussian_image, radius_factor=3, num_bins=36, peak_ratio=0.8, scale_factor=1.5):
-    """Compute orientations for each keypoint
+
+def assignOrientationsToDecryptedKeypoints(detected_keypoint: KeyPoint, octave_level: int, blurred_image: np.ndarray, 
+                                           radius_multiplier: Optional[int] = 3, 
+                                           histogram_bins: Optional[int] = 36, 
+                                           peak_threshold: Optional[float] = 0.8, 
+                                           scale_multiplier: Optional[float] = 1.5) -> List[KeyPoint]:
     """
-    print('Computing keypoint orientations...')
-    keypoints_with_orientations = []
-    image_shape = gaussian_image.shape
+    Assign orientations to a given keypoint based on the gradients around it in the Gaussian image.
 
-    scale = scale_factor * keypoint.size / float32(2 ** (octave_index + 1))  # compare with keypoint.size computation in localizeExtremumViaQuadraticFit()
-    radius = int(round(radius_factor * scale))
-    weight_factor = -0.5 / (scale ** 2)
-    raw_histogram = zeros(num_bins)
-    smooth_histogram = zeros(num_bins)
+    Args:
+    detected_keypoint (KeyPoint): The keypoint for which orientations need to be assigned.
+    octave_level (int): The octave level of the keypoint.
+    blurred_image (np.ndarray): The Gaussian-blurred image corresponding to the keypoint's octave.
+    radius_multiplier (int): Factor to determine the radius of the region around the keypoint.
+    histogram_bins (int): Number of bins in the orientation histogram.
+    peak_threshold (float): Threshold to identify prominent orientations.
+    scale_multiplier (float): Scale factor to determine the effective scale of the keypoint.
 
-    for i in range(-radius, radius + 1):
-        region_y = int(round(keypoint.pt[1] / float32(2 ** octave_index))) + i
-        if region_y > 0 and region_y < image_shape[0] - 1:
-            for j in range(-radius, radius + 1):
-                region_x = int(round(keypoint.pt[0] / float32(2 ** octave_index))) + j
-                if region_x > 0 and region_x < image_shape[1] - 1:
-
-                    dx = decrypt(homomorphicSubtraction(gaussian_image[region_y, region_x + 1],gaussian_image[region_y, region_x - 1])).astype(np.float32) / 100
-                    dy = decrypt(homomorphicSubtraction(gaussian_image[region_y - 1, region_x],gaussian_image[region_y + 1, region_x])).astype(np.float32) / 100
-                    
-                    gradient_magnitude = sqrt(dx * dx + dy * dy)
-                    gradient_orientation = rad2deg(arctan2(dy, dx))
-                    weight = exp(weight_factor * (i ** 2 + j ** 2))  # constant in front of exponential can be dropped because we will find peaks later
-                    histogram_index = int(round(gradient_orientation * num_bins / 360.))
-                    raw_histogram[histogram_index % num_bins] += weight * gradient_magnitude
-
-    for n in range(num_bins):
-        smooth_histogram[n] = (6 * raw_histogram[n] + 4 * (raw_histogram[n - 1] + raw_histogram[(n + 1) % num_bins]) + raw_histogram[n - 2] + raw_histogram[(n + 2) % num_bins]) / 16.
-    orientation_max = max(smooth_histogram)
-    orientation_peaks = where(logical_and(smooth_histogram > roll(smooth_histogram, 1), smooth_histogram > roll(smooth_histogram, -1)))[0]
-    for peak_index in orientation_peaks:
-        peak_value = smooth_histogram[peak_index]
-        if peak_value >= peak_ratio * orientation_max:
-            # Quadratic peak interpolation
-            # The interpolation update is given by equation (6.30) in https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
-            left_value = smooth_histogram[(peak_index - 1) % num_bins]
-            right_value = smooth_histogram[(peak_index + 1) % num_bins]
-            interpolated_peak_index = (peak_index + 0.5 * (left_value - right_value) / (left_value - 2 * peak_value + right_value)) % num_bins
-            orientation = 360. - interpolated_peak_index * 360. / num_bins
-            if abs(orientation - 360.) < float_tolerance:
-                orientation = 0
-            new_keypoint = KeyPoint(*keypoint.pt, keypoint.size, orientation, keypoint.response, keypoint.octave)
-            keypoints_with_orientations.append(new_keypoint)
-    return keypoints_with_orientations
-
-
-def findDecryptedScaleSpaceExtrema(gaussian_images, dog_images, num_intervals, sigma, image_border_width, contrast_threshold=0.04):
-    """Find pixel positions of all scale-space extrema in the image pyramid
+    Returns:
+    List[KeyPoint]: A list of keypoints with assigned orientations.
     """
-    print('Finding scale-space extrema...')
-    threshold = floor(0.5 * contrast_threshold / num_intervals * 255)  # from OpenCV implementation
-    keypoints = []
 
-    for octave_index, dog_images_in_octave in enumerate(dog_images):
-        for image_index, (first_image, second_image, third_image) in enumerate(zip(dog_images_in_octave, dog_images_in_octave[1:], dog_images_in_octave[2:])):
-            # (i, j) is the center of the 3x3 array
-            tensor_center_pixels_total = []
-            tensor_neighbors_pixels_total = [] 
-            for i in range(image_border_width, first_image.shape[0] - image_border_width):
-                for j in range(image_border_width, first_image.shape[1] - image_border_width):
-                    first_neighbor = first_image[i-1:i+2, j-1:j+2]
-                    second_neighbor = second_image[i-1:i+2, j-1:j+2]
-                    third_neighbor = third_image[i-1:i+2, j-1:j+2]
-                    tensor_center_pixels = np.full((3,3),second_neighbor[1,1])
+    print('Assigning orientations to keypoints...')
 
-                    tensor_center_pixels_total.append([tensor_center_pixels,tensor_center_pixels,tensor_center_pixels])
-                    tensor_neighbors_pixels_total.append([first_neighbor,second_neighbor,third_neighbor])
-            
-                    #if isEncryptedPixelAnExtremum(first_image[i-1:i+2, j-1:j+2], second_image[i-1:i+2, j-1:j+2], third_image[i-1:i+2, j-1:j+2], threshold):
-            tensor_center_pixels_total = np.array(tensor_center_pixels_total)
-            tensor_neighbors_pixels_total = np.array(tensor_neighbors_pixels_total)
-            result = isEncryptedPixelAnExtremum(tensor_center_pixels_total,tensor_neighbors_pixels_total)
-            i = image_border_width
-            j = image_border_width
-            for value in result:
-                if value:
-                    localization_result = localizeDecryptedExtremumViaQuadraticFit(i, j, image_index + 1, octave_index, num_intervals, dog_images_in_octave, sigma, contrast_threshold, image_border_width)
-                    if localization_result is not None:
-                        keypoint, localized_image_index = localization_result
-                        keypoints_with_orientations = computeDecryptedKeypointsWithOrientations(keypoint, octave_index, gaussian_images[octave_index][localized_image_index])
-                        for keypoint_with_orientation in keypoints_with_orientations:
-                            keypoints.append(keypoint_with_orientation)
-                j+=1
-                if j == first_image.shape[1] - image_border_width:
-                    j = image_border_width
-                    i+=1
-    return keypoints
+    # Initialize a list to hold keypoints with assigned orientations
+    oriented_keypoints = []
+    img_shape = blurred_image.shape
 
-def compareKeypoints(keypoint1, keypoint2):
-    """Return True if keypoint1 is less than keypoint2
+    # Calculate the effective scale and radius around the keypoint
+    effective_scale = scale_multiplier * detected_keypoint.size / float32(2 ** (octave_level + 1))
+    search_radius = int(round(radius_multiplier * effective_scale))
+    gaussian_weight_factor = -0.5 / (effective_scale ** 2)
+    orientation_histogram = zeros(histogram_bins)
+    smoothed_histogram = zeros(histogram_bins)
+
+    # Iterate over pixels in the region around the keypoint
+    for i in range(-search_radius, search_radius + 1):
+        region_y = int(round(detected_keypoint.pt[1] / float32(2 ** octave_level))) + i
+        if 0 < region_y < img_shape[0] - 1:
+            for j in range(-search_radius, search_radius + 1):
+                region_x = int(round(detected_keypoint.pt[0] / float32(2 ** octave_level))) + j
+                if 0 < region_x < img_shape[1] - 1:
+                    # Compute gradients using decrypted image values
+                    gradient_x = decrypt(homomorphicSubtraction(blurred_image[region_y, region_x + 1], blurred_image[region_y, region_x - 1])).astype(np.float32) / 100
+                    gradient_y = decrypt(homomorphicSubtraction(blurred_image[region_y - 1, region_x], blurred_image[region_y + 1, region_x])).astype(np.float32) / 100
+
+                    # Calculate gradient magnitude and orientation
+                    magnitude = sqrt(gradient_x * gradient_x + gradient_y * gradient_y)
+                    orientation = rad2deg(arctan2(gradient_y, gradient_x))
+                    weight = exp(gaussian_weight_factor * (i ** 2 + j ** 2))
+                    histogram_idx = int(round(orientation * histogram_bins / 360.)) % histogram_bins
+                    orientation_histogram[histogram_idx] += weight * magnitude
+
+    # Smooth the orientation histogram
+    for n in range(histogram_bins):
+        smoothed_histogram[n] = (6 * orientation_histogram[n] + 4 * (orientation_histogram[n - 1] + orientation_histogram[(n + 1) % histogram_bins]) + orientation_histogram[n - 2] + orientation_histogram[(n + 2) % histogram_bins]) / 16.
+
+    # Identify peaks in the smoothed histogram
+    max_orientation = max(smoothed_histogram)
+    prominent_peaks = where(logical_and(smoothed_histogram > roll(smoothed_histogram, 1), smoothed_histogram > roll(smoothed_histogram, -1)))[0]
+    for peak_idx in prominent_peaks:
+        peak_value = smoothed_histogram[peak_idx]
+        if peak_value >= peak_threshold * max_orientation:
+            # Interpolate the peak position for higher accuracy
+            left_neighbor = smoothed_histogram[(peak_idx - 1) % histogram_bins]
+            right_neighbor = smoothed_histogram[(peak_idx + 1) % histogram_bins]
+            interpolated_peak_idx = (peak_idx + 0.5 * (left_neighbor - right_neighbor) / (left_neighbor - 2 * peak_value + right_neighbor)) % histogram_bins
+            final_orientation = 360. - interpolated_peak_idx * 360. / histogram_bins
+            if abs(final_orientation - 360.) < float_tolerance:
+                final_orientation = 0
+
+            # Create a new keypoint with the assigned orientation
+            new_keypoint = KeyPoint(*detected_keypoint.pt, detected_keypoint.size, final_orientation, detected_keypoint.response, detected_keypoint.octave)
+            oriented_keypoints.append(new_keypoint)
+
+    return oriented_keypoints
+
+
+
+def detectScaleSpaceExtremaInEncryptedImages(blurred_imgs: List[List[np.ndarray]], dog_imgs: List[List[np.ndarray]], 
+                                             interval_count: int, blur_sigma: float, border_size: int, 
+                                             contrast_thresh: Optional[float] = 0.04) -> List[KeyPoint]:
     """
-    if keypoint1.pt[0] != keypoint2.pt[0]:
-        return keypoint1.pt[0] - keypoint2.pt[0]
-    if keypoint1.pt[1] != keypoint2.pt[1]:
-        return keypoint1.pt[1] - keypoint2.pt[1]
-    if keypoint1.size != keypoint2.size:
-        return keypoint2.size - keypoint1.size
-    if keypoint1.angle != keypoint2.angle:
-        return keypoint1.angle - keypoint2.angle
-    if keypoint1.response != keypoint2.response:
-        return keypoint2.response - keypoint1.response
-    if keypoint1.octave != keypoint2.octave:
-        return keypoint2.octave - keypoint1.octave
-    return keypoint2.class_id - keypoint1.class_id
+    Detect extrema in the scale-space of encrypted images.
 
-def removeDuplicateKeypoints(keypoints):
-    """Sort keypoints and remove duplicate keypoints
+    Args:
+    blurred_imgs (List[List[np.ndarray]]): List of Gaussian-blurred images in the scale-space.
+    dog_imgs (List[List[np.ndarray]]): List of Difference-of-Gaussian images in the scale-space.
+    interval_count (int): Number of intervals in the scale-space.
+    blur_sigma (float): Sigma value used for blurring.
+    border_size (int): Width of the border to be ignored while detecting extrema.
+    contrast_thresh (float): Threshold for contrast to filter out weak extrema.
+
+    Returns:
+    List[KeyPoint]: A list of keypoints detected in the scale-space.
     """
-    if len(keypoints) < 2:
-        return keypoints
 
-    keypoints.sort(key=cmp_to_key(compareKeypoints))
-    unique_keypoints = [keypoints[0]]
+    print('Detecting scale-space extrema in encrypted images...')
+    # Compute the threshold value for extrema detection
+    detection_threshold = floor(0.5 * contrast_thresh / interval_count * 255)
 
-    for next_keypoint in keypoints[1:]:
-        last_unique_keypoint = unique_keypoints[-1]
-        if last_unique_keypoint.pt[0] != next_keypoint.pt[0] or \
-           last_unique_keypoint.pt[1] != next_keypoint.pt[1] or \
-           last_unique_keypoint.size != next_keypoint.size or \
-           last_unique_keypoint.angle != next_keypoint.angle:
-            unique_keypoints.append(next_keypoint)
-    return unique_keypoints
+    # Initialize a list to store detected keypoints
+    detected_keypoints = []
 
-def convertKeypointsToInputImageSize(keypoints):
-    """Convert keypoint point, size, and octave to input image size
+    # Iterate over each octave in the scale-space
+    for octave_idx, dog_octave in enumerate(dog_imgs):
+        # Iterate over each set of three images in the DoG octave
+        for img_idx, (prev_img, current_img, next_img) in enumerate(zip(dog_octave, dog_octave[1:], dog_octave[2:])):
+            # Prepare tensors for center pixels and their neighbors
+            center_pixels = []
+            neighbor_pixels = []
+
+            # Scan through the image, avoiding the borders
+            for row in range(border_size, prev_img.shape[0] - border_size):
+                for col in range(border_size, prev_img.shape[1] - border_size):
+                    # Gather the 3x3 regions from the triplet of images
+                    neighbor_prev = prev_img[row-1:row+2, col-1:col+2]
+                    neighbor_current = current_img[row-1:row+2, col-1:col+2]
+                    neighbor_next = next_img[row-1:row+2, col-1:col+2]
+                    center_value = np.full((3,3), neighbor_current[1,1])
+
+                    # Add center and neighbor pixels to the respective lists
+                    center_pixels.append([center_value, center_value, center_value])
+                    neighbor_pixels.append([neighbor_prev, neighbor_current, neighbor_next])
+
+            # Convert lists to arrays for extrema checking
+            center_pixels_array = np.array(center_pixels)
+            neighbor_pixels_array = np.array(neighbor_pixels)
+            extrema_results = checkEncryptedPixelExtremum(center_pixels_array, neighbor_pixels_array)
+
+            # Iterate over the results to refine keypoints and assign orientations
+            row, col = border_size, border_size
+            for is_extremum in extrema_results:
+                if is_extremum:
+                    # Refine the position of each extremum
+                    refined_result = refineExtremumPositionInScaleSpace(row, col, img_idx + 1, octave_idx, interval_count, dog_octave, blur_sigma, contrast_thresh, border_size)
+                    if refined_result is not None:
+                        refined_keypoint, refined_img_idx = refined_result
+                        # Assign orientations to the refined keypoints
+                        keypoints_with_orientations = assignOrientationsToDecryptedKeypoints(refined_keypoint, octave_idx, blurred_imgs[octave_idx][refined_img_idx])
+                        detected_keypoints.extend(keypoints_with_orientations)
+
+                # Update the row and column indices
+                col += 1
+                if col == prev_img.shape[1] - border_size:
+                    col = border_size
+                    row += 1
+
+    return detected_keypoints
+
+
+def orderKeypointsByFeatures(kp1: KeyPoint, kp2: KeyPoint) -> float:
     """
-    converted_keypoints = []
-    for keypoint in keypoints:
-        keypoint.pt = tuple(0.5 * array(keypoint.pt))
-        keypoint.size *= 0.5
-        keypoint.octave = (keypoint.octave & ~255) | ((keypoint.octave - 1) & 255)
-        converted_keypoints.append(keypoint)
-    return converted_keypoints
+    Compare two keypoints and determine their order based on several attributes.
 
+    Args:
+    kp1, kp2 (KeyPoint): Two keypoints to be compared.
 
-
-
-def unpackOctave(keypoint):
-    """Compute octave, layer, and scale from a keypoint
+    Returns:
+    float: A negative, zero, or positive value indicating the order of kp1 relative to kp2.
     """
-    octave = keypoint.octave & 255
-    layer = (keypoint.octave >> 8) & 255
-    if octave >= 128:
-        octave = octave | -128
-    scale = 1 / float32(1 << octave) if octave >= 0 else float32(1 << -octave)
-    return octave, layer, scale
+
+    # Compare by x-coordinate
+    if kp1.pt[0] != kp2.pt[0]:
+        return kp1.pt[0] - kp2.pt[0]
+
+    # Compare by y-coordinate
+    if kp1.pt[1] != kp2.pt[1]:
+        return kp1.pt[1] - kp2.pt[1]
+
+    # Compare by size (larger keypoints first)
+    if kp1.size != kp2.size:
+        return kp2.size - kp1.size
+
+    # Compare by angle
+    if kp1.angle != kp2.angle:
+        return kp1.angle - kp2.angle
+
+    # Compare by response (stronger responses first)
+    if kp1.response != kp2.response:
+        return kp2.response - kp1.response
+
+    # Compare by octave (higher octaves first)
+    if kp1.octave != kp2.octave:
+        return kp2.octave - kp1.octave
+
+    # Lastly, compare by class ID
+    return kp2.class_id - kp1.class_id
 
 
-
-
-def generateDescriptors(keypoints, gaussian_images, window_width=4, num_bins=8, scale_multiplier=3, descriptor_max_value=0.2):
-    """Generate descriptors for each keypoint
+def filterOutDuplicateKeypoints(detected_keypoints: List[KeyPoint]) -> List[KeyPoint]:
     """
+    Sort the detected keypoints and remove any duplicates.
+
+    Args:
+    detected_keypoints (List[KeyPoint]): A list of keypoints detected in the image.
+
+    Returns:
+    List[KeyPoint]: A list of unique keypoints after removing duplicates.
+    """
+
+    # Return the list as is if it has less than two keypoints
+    if len(detected_keypoints) < 2:
+        return detected_keypoints
+
+    # Sort the keypoints using the custom comparison function
+    detected_keypoints.sort(key=cmp_to_key(orderKeypointsByFeatures))
+
+    # Initialize a list to hold the unique keypoints, starting with the first keypoint
+    unique_kps = [detected_keypoints[0]]
+
+    # Iterate over the sorted keypoints, starting from the second keypoint
+    for current_kp in detected_keypoints[1:]:
+        # Get the most recently added unique keypoint
+        last_unique_kp = unique_kps[-1]
+
+        # Check if the current keypoint differs from the last unique keypoint
+        if (last_unique_kp.pt[0] != current_kp.pt[0] or
+            last_unique_kp.pt[1] != current_kp.pt[1] or
+            last_unique_kp.size != current_kp.size or
+            last_unique_kp.angle != current_kp.angle):
+            # If different, add it to the list of unique keypoints
+            unique_kps.append(current_kp)
+
+    return unique_kps
+
+
+def resizeKeypointsToOriginalImageScale(detected_keypoints: List[KeyPoint]) -> List[KeyPoint]:
+    """
+    Adjust the scale of the detected keypoints to match the scale of the original input image.
+    
+    Args:
+    detected_keypoints (List[KeyPoint]): A list of keypoints detected in the scaled image.
+
+    Returns:
+    List[KeyPoint]: A list of keypoints adjusted to the original image scale.
+    """
+
+    # Initialize a list to hold the keypoints converted to the original image scale
+    scaled_keypoints = []
+
+    for kp in detected_keypoints:
+        # Adjust the keypoint position to the original image scale
+        kp.pt = tuple(0.5 * array(kp.pt))
+
+        # Adjust the keypoint size to the original image scale
+        kp.size *= 0.5
+
+        # Adjust the octave number of the keypoint
+        kp.octave = (kp.octave & ~255) | ((kp.octave - 1) & 255)
+
+        # Add the adjusted keypoint to the list
+        scaled_keypoints.append(kp)
+
+    return scaled_keypoints
+
+
+def decodeKeypointOctaveInfo(kp: KeyPoint):
+    """
+    Decode the octave, layer, and scale information from a keypoint's octave value.
+
+    Args:
+    kp (KeyPoint): A keypoint with octave information encoded.
+
+    Returns:
+    tuple: A tuple containing the octave, layer, and scale corresponding to the keypoint.
+    """
+
+    # Extract the octave information from the keypoint
+    octave_info = kp.octave & 255
+
+    # Extract the layer information from the keypoint
+    layer_info = (kp.octave >> 8) & 255
+
+    # Adjust the octave value if it's greater than 128
+    if octave_info >= 128:
+        octave_info = octave_info | -128
+
+    # Calculate the scale based on the octave
+    # The scale is inversely proportional to the power of 2 of the octave number
+    scale = 1 / float32(1 << octave_info) if octave_info >= 0 else float32(1 << -octave_info)
+
+    return octave_info, layer_info, scale
+
+def createKeypointDescriptors(identified_keypoints: List[KeyPoint], scale_space_images: List[List[np.ndarray]], 
+                              descriptor_window: Optional[int] = 4, histogram_bins: Optional[int] = 8, 
+                              scale_factor: Optional[int] = 3, max_descriptor_value: Optional[float]=0.2) -> np.ndarray:
+    """
+    Generate descriptors for each identified keypoint in the scale-space images.
+
+    Args:
+    identified_keypoints (List[KeyPoint]): List of keypoints for which descriptors are to be generated.
+    scale_space_images (List[List[np.ndarray]]): Gaussian-blurred images at different scales.
+    descriptor_window (int): Width of the square window around each keypoint for descriptor calculation.
+    histogram_bins (int): Number of orientation bins for the histogram.
+    scale_factor (float): Multiplier for determining the actual scale of a keypoint.
+    max_descriptor_value (float): Maximum value for clipping the descriptor vector.
+
+    Returns:
+    np.ndarray: Array of descriptor vectors for each keypoint.
+    """
+
     descriptors = []
-    for keypoint in keypoints:
-        octave, layer, scale = unpackOctave(keypoint)
-        gaussian_image = gaussian_images[octave + 1, layer]
-        num_rows, num_cols = gaussian_image.shape
-        point = round(scale * array(keypoint.pt)).astype('int')
-        bins_per_degree = num_bins / 360.
-        angle = 360. - keypoint.angle
-        cos_angle = cos(deg2rad(angle))
-        sin_angle = sin(deg2rad(angle))
-        weight_multiplier = -0.5 / ((0.5 * window_width) ** 2)
-        row_bin_list = []
-        col_bin_list = []
-        magnitude_list = []
-        orientation_bin_list = []
-        histogram_tensor = zeros((window_width + 2, window_width + 2, num_bins))   # first two dimensions are increased by 2 to account for border effects
+    for kp in identified_keypoints:
+        # Decode the keypoint octave information
+        octave, layer, kp_scale = decodeKeypointOctaveInfo(kp)
+        gaussian_img = scale_space_images[octave + 1, layer]
 
-        # Descriptor window size (described by half_width) follows OpenCV convention
-        hist_width = scale_multiplier * 0.5 * scale * keypoint.size
-        half_width = int(round(hist_width * sqrt(2) * (window_width + 1) * 0.5))   # sqrt(2) corresponds to diagonal length of a pixel
-        half_width = int(min(half_width, sqrt(num_rows ** 2 + num_cols ** 2)))     # ensure half_width lies within image
+        # Calculate the descriptor window size and orientation bin properties
+        descriptor_radius = int(round(scale_factor * 0.5 * kp_scale * kp.size * sqrt(2) * (descriptor_window + 1) * 0.5))
+        descriptor_radius = min(descriptor_radius, int(sqrt(gaussian_img.shape[0] ** 2 + gaussian_img.shape[1] ** 2)))
+        bins_per_degree = histogram_bins / 360.
+        rotation_angle = 360. - kp.angle
+        cos_rot = cos(deg2rad(rotation_angle))
+        sin_rot = sin(deg2rad(rotation_angle))
+        weight_factor = -0.5 / ((0.5 * descriptor_window) ** 2)
+        
+        # Initialize lists for histogram calculation
+        row_bins, col_bins, magnitudes, orientation_bins = [], [], [], []
+        histogram_tensor = zeros((descriptor_window + 2, descriptor_window + 2, histogram_bins))
 
-        for row in range(-half_width, half_width + 1):
-            for col in range(-half_width, half_width + 1):
-                row_rot = col * sin_angle + row * cos_angle
-                col_rot = col * cos_angle - row * sin_angle
-                row_bin = (row_rot / hist_width) + 0.5 * window_width - 0.5
-                col_bin = (col_rot / hist_width) + 0.5 * window_width - 0.5
-                if row_bin > -1 and row_bin < window_width and col_bin > -1 and col_bin < window_width:
-                    window_row = int(round(point[1] + row))
-                    window_col = int(round(point[0] + col))
-                    if window_row > 0 and window_row < num_rows - 1 and window_col > 0 and window_col < num_cols - 1:
-                        dx = decrypt(homomorphicSubtraction(gaussian_image[window_row, window_col + 1],gaussian_image[window_row, window_col - 1])).astype(np.float32) / 100
-                        dy = decrypt(homomorphicSubtraction(gaussian_image[window_row - 1, window_col],gaussian_image[window_row + 1, window_col])).astype(np.float32) / 100
-                        
-                        gradient_magnitude = sqrt(dx * dx + dy * dy)
-                        gradient_orientation = rad2deg(arctan2(dy, dx)) % 360
-                        weight = exp(weight_multiplier * ((row_rot / hist_width) ** 2 + (col_rot / hist_width) ** 2))
-                        row_bin_list.append(row_bin)
-                        col_bin_list.append(col_bin)
-                        magnitude_list.append(weight * gradient_magnitude)
-                        orientation_bin_list.append((gradient_orientation - angle) * bins_per_degree)
+        # Iterate over the window around the keypoint
+        for row_offset in range(-descriptor_radius, descriptor_radius + 1):
+            for col_offset in range(-descriptor_radius, descriptor_radius + 1):
+                # Calculate rotated window coordinates
+                row_rot = col_offset * sin_rot + row_offset * cos_rot
+                col_rot = col_offset * cos_rot - row_offset * sin_rot
+                row_bin = (row_rot / (scale_factor * kp_scale * kp.size)) + 0.5 * descriptor_window - 0.5
+                col_bin = (col_rot / (scale_factor * kp_scale * kp.size)) + 0.5 * descriptor_window - 0.5
+                
+                # Compute gradients if within image boundaries
+                if 0 <= row_bin < descriptor_window and 0 <= col_bin < descriptor_window:
+                    window_row = int(round(kp.pt[1] * kp_scale) + row_offset)
+                    window_col = int(round(kp.pt[0] * kp_scale) + col_offset)
+                    if 0 < window_row < gaussian_img.shape[0] - 1 and 0 < window_col < gaussian_img.shape[1] - 1:
+                        dx = decrypt(homomorphicSubtraction(gaussian_img[window_row, window_col + 1], gaussian_img[window_row, window_col - 1])).astype(np.float32) / 100
+                        dy = decrypt(homomorphicSubtraction(gaussian_img[window_row - 1, window_col], gaussian_img[window_row + 1, window_col])).astype(np.float32) / 100
+                        magnitude = sqrt(dx * dx + dy * dy)
+                        orientation = rad2deg(arctan2(dy, dx)) % 360
 
-        for row_bin, col_bin, magnitude, orientation_bin in zip(row_bin_list, col_bin_list, magnitude_list, orientation_bin_list):
-            # Smoothing via trilinear interpolation
-            # Notations follows https://en.wikipedia.org/wiki/Trilinear_interpolation
-            # Note that we are really doing the inverse of trilinear interpolation here (we take the center value of the cube and distribute it among its eight neighbors)
-            row_bin_floor, col_bin_floor, orientation_bin_floor = floor([row_bin, col_bin, orientation_bin]).astype(int)
-            row_fraction, col_fraction, orientation_fraction = row_bin - row_bin_floor, col_bin - col_bin_floor, orientation_bin - orientation_bin_floor
-            if orientation_bin_floor < 0:
-                orientation_bin_floor += num_bins
-            if orientation_bin_floor >= num_bins:
-                orientation_bin_floor -= num_bins
+                        # Accumulate gradient information in histogram bins
+                        weight = exp(weight_factor * (row_rot ** 2 + col_rot ** 2))
+                        row_bins.append(row_bin)
+                        col_bins.append(col_bin)
+                        magnitudes.append(weight * magnitude)
+                        orientation_bins.append((orientation - rotation_angle) * bins_per_degree)
 
-            c1 = magnitude * row_fraction
-            c0 = magnitude * (1 - row_fraction)
-            c11 = c1 * col_fraction
-            c10 = c1 * (1 - col_fraction)
-            c01 = c0 * col_fraction
-            c00 = c0 * (1 - col_fraction)
-            c111 = c11 * orientation_fraction
-            c110 = c11 * (1 - orientation_fraction)
-            c101 = c10 * orientation_fraction
-            c100 = c10 * (1 - orientation_fraction)
-            c011 = c01 * orientation_fraction
-            c010 = c01 * (1 - orientation_fraction)
-            c001 = c00 * orientation_fraction
-            c000 = c00 * (1 - orientation_fraction)
+        # Populate the histogram tensor using trilinear interpolation
+        for row_bin, col_bin, magnitude, orientation_bin in zip(row_bins, col_bins, magnitudes, orientation_bins):
+            # Perform trilinear interpolation and update histogram tensor
+            histogram_tensor = interpolateHistogram(histogram_tensor, row_bin, col_bin, orientation_bin, magnitude, histogram_bins)
 
-            histogram_tensor[row_bin_floor + 1, col_bin_floor + 1, orientation_bin_floor] += c000
-            histogram_tensor[row_bin_floor + 1, col_bin_floor + 1, (orientation_bin_floor + 1) % num_bins] += c001
-            histogram_tensor[row_bin_floor + 1, col_bin_floor + 2, orientation_bin_floor] += c010
-            histogram_tensor[row_bin_floor + 1, col_bin_floor + 2, (orientation_bin_floor + 1) % num_bins] += c011
-            histogram_tensor[row_bin_floor + 2, col_bin_floor + 1, orientation_bin_floor] += c100
-            histogram_tensor[row_bin_floor + 2, col_bin_floor + 1, (orientation_bin_floor + 1) % num_bins] += c101
-            histogram_tensor[row_bin_floor + 2, col_bin_floor + 2, orientation_bin_floor] += c110
-            histogram_tensor[row_bin_floor + 2, col_bin_floor + 2, (orientation_bin_floor + 1) % num_bins] += c111
+        # Flatten and normalize the histogram tensor to create the descriptor
+        descriptor_vector = normalizeDescriptor(histogram_tensor, max_descriptor_value)
 
-        descriptor_vector = histogram_tensor[1:-1, 1:-1, :].flatten()  # Remove histogram borders
-        # Threshold and normalize descriptor_vector
-        threshold = norm(descriptor_vector) * descriptor_max_value
-        descriptor_vector[descriptor_vector > threshold] = threshold
-        descriptor_vector /= max(norm(descriptor_vector), float_tolerance)
-        # Multiply by 512, round, and saturate between 0 and 255 to convert from float32 to unsigned char (OpenCV convention)
-        descriptor_vector = round(512 * descriptor_vector)
-        descriptor_vector[descriptor_vector < 0] = 0
-        descriptor_vector[descriptor_vector > 255] = 255
+        # Add the descriptor vector to the list
         descriptors.append(descriptor_vector)
+
     return array(descriptors, dtype='float32')
 
-def HESIFT(img):
+def interpolateHistogram(histogram_tensor: np.ndarray, row_bin: float, col_bin: float, orientation_bin: float, 
+                         magnitude: float, num_bins: int) -> np.ndarray:
+    """
+    Helper function to perform trilinear interpolation and update the histogram tensor.
+
+    Args:
+    histogram_tensor (np.ndarray): Tensor to be updated with histogram values.
+    row_bin, col_bin, orientation_bin (float): Binned coordinates for the gradient.
+    magnitude (float): Gradient magnitude to be distributed.
+    num_bins (int): Number of orientation bins.
+
+    Returns:
+    histogram_tensor (np.ndarray): updated histogram.
+    """
+    row_bin_floor, col_bin_floor, orientation_bin_floor = floor([row_bin, col_bin, orientation_bin]).astype(int)
+    row_fraction, col_fraction, orientation_fraction = row_bin - row_bin_floor, col_bin - col_bin_floor, orientation_bin - orientation_bin_floor
+    if orientation_bin_floor < 0:
+        orientation_bin_floor += num_bins
+    if orientation_bin_floor >= num_bins:
+        orientation_bin_floor -= num_bins
+
+    c1 = magnitude * row_fraction
+    c0 = magnitude * (1 - row_fraction)
+    c11 = c1 * col_fraction
+    c10 = c1 * (1 - col_fraction)
+    c01 = c0 * col_fraction
+    c00 = c0 * (1 - col_fraction)
+    c111 = c11 * orientation_fraction
+    c110 = c11 * (1 - orientation_fraction)
+    c101 = c10 * orientation_fraction
+    c100 = c10 * (1 - orientation_fraction)
+    c011 = c01 * orientation_fraction
+    c010 = c01 * (1 - orientation_fraction)
+    c001 = c00 * orientation_fraction
+    c000 = c00 * (1 - orientation_fraction)
+
+    histogram_tensor[row_bin_floor + 1, col_bin_floor + 1, orientation_bin_floor] += c000
+    histogram_tensor[row_bin_floor + 1, col_bin_floor + 1, (orientation_bin_floor + 1) % num_bins] += c001
+    histogram_tensor[row_bin_floor + 1, col_bin_floor + 2, orientation_bin_floor] += c010
+    histogram_tensor[row_bin_floor + 1, col_bin_floor + 2, (orientation_bin_floor + 1) % num_bins] += c011
+    histogram_tensor[row_bin_floor + 2, col_bin_floor + 1, orientation_bin_floor] += c100
+    histogram_tensor[row_bin_floor + 2, col_bin_floor + 1, (orientation_bin_floor + 1) % num_bins] += c101
+    histogram_tensor[row_bin_floor + 2, col_bin_floor + 2, orientation_bin_floor] += c110
+    histogram_tensor[row_bin_floor + 2, col_bin_floor + 2, (orientation_bin_floor + 1) % num_bins] += c111
+
+    return histogram_tensor
+
+
+def normalizeDescriptor(histogram_tensor: np.ndarray, max_value: float) -> np.ndarray:
+    """
+    Helper function to normalize the descriptor vector.
+
+    Args:
+    histogram_tensor (np.ndarray): Tensor representing the unnormalized descriptor.
+    max_value (float): Maximum allowed value in the normalized descriptor.
+
+    Returns:
+    np.ndarray: Normalized descriptor vector.
+    """
+    descriptor_vector = histogram_tensor[1:-1, 1:-1, :].flatten()  # Remove histogram borders
+    # Threshold and normalize descriptor_vector
+    threshold = norm(descriptor_vector) * max_value
+    descriptor_vector[descriptor_vector > threshold] = threshold
+    descriptor_vector /= max(norm(descriptor_vector), float_tolerance)
+    # Multiply by 512, round, and saturate between 0 and 255 to convert from float32 to unsigned char (OpenCV convention)
+    descriptor_vector = round(512 * descriptor_vector)
+    descriptor_vector[descriptor_vector < 0] = 0
+    descriptor_vector[descriptor_vector > 255] = 255
+
+    return descriptor_vector
+
+
+def HESIFT(img: np.ndarray) -> Tuple[KeyPoint, np.ndarray]:
     baseImage = (rgb2gray(img) * 255).astype(np.int64)
     grayscale_image = (rgb2gray(img) * 255).astype(np.float32)
-    baseImage = generateBaseImage(grayscale_image, 2, 0).astype(np.int64)
+    baseImage = prepareInitialHESIFTImage(grayscale_image, 2, 0).astype(np.int64)
     num_octaves = computeNumberOfOctaves(baseImage.shape)
-    gaussian_kernels = generateGaussianKernels(0.4, 3)
+    gaussian_kernels = createGaussianBlurKernels(0.4, 3)
     encryptedBaseImage = encryptImage(baseImage)
-    encryptedGaussianImages = generateEncryptedGaussianImages(encryptedBaseImage, num_octaves, gaussian_kernels)
-    encryptedDOGImages = generateEncryptedDoGImages(encryptedGaussianImages)
-    keypoints_duplicate = findDecryptedScaleSpaceExtrema(encryptedGaussianImages,encryptedDOGImages, 3, 0.4, 5)
-    keypoints = removeDuplicateKeypoints(keypoints_duplicate)
-    keypoints = convertKeypointsToInputImageSize(keypoints)
-    descriptors = generateDescriptors(keypoints, encryptedGaussianImages)
+    encryptedGaussianImages = createScaleSpacePyramid(encryptedBaseImage, num_octaves, gaussian_kernels)
+    encryptedDOGImages = createEncryptedDoGPyramid(encryptedGaussianImages)
+    keypoints_duplicate = detectScaleSpaceExtremaInEncryptedImages(encryptedGaussianImages,encryptedDOGImages, 3, 0.4, 5)
+    keypoints = filterOutDuplicateKeypoints(keypoints_duplicate)
+    keypoints = resizeKeypointsToOriginalImageScale(keypoints)
+    descriptors = createKeypointDescriptors(keypoints, encryptedGaussianImages)
     return keypoints, descriptors
