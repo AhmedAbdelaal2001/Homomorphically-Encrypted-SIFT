@@ -1,8 +1,4 @@
-Certainly! Here's the modified README.md file with a new section explaining how to use the application:
-
----
-
-# Project Name
+# Homomorphically-Encrypted-SIFT
 
 ## Image Matching with Paillier Encryption and HE-SIFT
 
@@ -16,7 +12,7 @@ To run the project locally, follow the steps below:
 
 1. **Clone the Repository:**
    ```bash
-   git clone https://github.com/your-username/your-repo.git
+   git clone https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-SIFT
    cd your-repo
    ```
 
