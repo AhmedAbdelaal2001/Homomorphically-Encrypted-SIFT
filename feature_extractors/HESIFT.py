@@ -450,6 +450,7 @@ def generateDescriptors(keypoints, gaussian_images, window_width=4, num_bins=8, 
     return array(descriptors, dtype='float32')
 
 def HESIFT(img):
+    baseImage = (rgb2gray(img) * 255).astype(np.int64)
     grayscale_image = (rgb2gray(img) * 255).astype(np.float32)
     baseImage = generateBaseImage(grayscale_image, 2, 0).astype(np.int64)
     num_octaves = computeNumberOfOctaves(baseImage.shape)
