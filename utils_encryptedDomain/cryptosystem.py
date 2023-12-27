@@ -33,7 +33,7 @@ def generate_random() -> int:
         if r % p != 0 and r % q != 0:  # r should be coprime to n
             return r
 
-def generate_random_tensor(shape: Tuple[int, ...]) -> np.ndarray:
+def generate_random_tensor(shape: Tuple[int, ...], randomized) -> np.ndarray:
     """
     This function is a direct extension to the generate_random() function; it takes in a numpy array shape,
     and generates a numpy array of that shape where every element is a random number r such that 1<r<n and
@@ -45,6 +45,9 @@ def generate_random_tensor(shape: Tuple[int, ...]) -> np.ndarray:
     Output
     - A numpy array of the same shape given in the input containing random integers.
     """
+
+    if (not randomized): return np.ones(shape)
+
     # Initialize an empty array of the given shape
     r_tensor = np.empty(shape, dtype=np.uint64)
     
@@ -172,7 +175,7 @@ def decodeImage(encodedImage: np.ndarray) -> np.ndarray:
     decodedImage[decodedImage > n // 2] -= n
     return decodedImage.astype(np.int64)
 
-def encryptImage(image: np.ndarray) -> np.ndarray:
+def encryptImage(image: np.ndarray, randomized: Optional[bool] = True) -> np.ndarray:
     """
     This function encrypts an entire image, its operations utilize numpy's vectorized operations for maximum efficiency.
 
@@ -183,7 +186,7 @@ def encryptImage(image: np.ndarray) -> np.ndarray:
     - encrypted image corresponding to the given image.
     """
     encodedImage = encodeImage(image)
-    return (fastPowering_matrixExponent(g, encodedImage, n_sq) * fastPowering(generate_random_tensor(encodedImage.shape), n, n_sq)) % n_sq
+    return (fastPowering_matrixExponent(g, encodedImage, n_sq) * fastPowering(generate_random_tensor(encodedImage.shape, randomized), n, n_sq)) % n_sq
 
 def decryptImage(encryptedImage: np.ndarray) -> np.ndarray:
     """

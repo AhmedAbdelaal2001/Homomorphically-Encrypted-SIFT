@@ -4,6 +4,8 @@ sys.path.append(parent_dir)
 import numpy as np
 from utils_encryptedDomain.cryptosystem import *
 from utils_plaintextDomain.utils import *
+from cv2 import resize, GaussianBlur, subtract, KeyPoint, INTER_LINEAR, INTER_NEAREST
+
 
 def homomorphicAddition(ciphertext1: int, ciphertext2: int) -> int:
     return (ciphertext1 * ciphertext2) % n_sq
