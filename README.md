@@ -1,10 +1,19 @@
-# Homomorphically-Encrypted-SIFT
+# A Secure Image Processing Pipeline based on Homomorphic Encryption
 
-## Image Matching with Paillier Encryption and HE-SIFT
+## Overview
+This repository contains the implementation of a privacy-preserving image processing system using homomorphic encryption, specifically the Paillier Cryptosystem. Our project enables operations on encrypted images, eliminating the need for decryption during processing. This approach ensures the privacy and security of image data.
 
-### Introduction
+## Features
+- **Paillier Cryptosystem**: Implementation of encryption, decryption, and key generation based on the Paillier Cryptosystem.
+- **Homomorphic Operations**: Support for addition and scalar multiplication on ciphertexts.
+- **Image Processing Operations**: Implements various image processing tasks like smoothing, edge detection, and morphology on encrypted images.
+- **HESIFT Algorithm**: Adaptation of the Scale Invariant Feature Transform (SIFT) algorithm for feature extraction from encrypted images.
+- **Image Matching**: Utilizes the Fast Library for Approximate Nearest Neighbors (FLANN) for efficient image matching.
 
-Welcome to the Image Matching project! This project focuses on securely matching images using a combination of Paillier encryption and Homomorphic Encryption-based Scale-Invariant Feature Transform (HE-SIFT). The goal is to provide a safe and privacy-preserving method for image matching while maintaining the integrity of sensitive data.
+## Code Structure
+The structure of the code is as follows:
+- The "utils_encryptedDomain" folder contains our implementation of the Paillier Cryptosystem, specifically tuned for efficiency and compatability with NumPy Arrays. Furthermore, it contains our implementation of Convolutions in the encrypted domain, as well as any other operations that can potentially be performed on encrypted images
+- The "feature_extractors" folder contains our implementation of Lowe's SIFT algorithm on encrypted images, named HESIFT (Homomorphically Encrypted SIFT). The HESIFT function found at the end of the file can be directly called to extract the keypoints and descriptors.
 
 ### How to Run Locally
 
@@ -58,10 +67,6 @@ To run the project locally, follow the steps below:
 - [scikit-image](https://scikit-image.org/): A collection of algorithms for image processing.
 - [Matplotlib](https://matplotlib.org/): A comprehensive library for creating static, animated, and interactive visualizations in Python.
 - [Pickle](https://docs.python.org/3/library/pickle.html): A module for serializing and deserializing Python objects.
-
-### Contributors
-
-- Your Name <your.email@example.com>
 
 ### License
 
