@@ -1,7 +1,15 @@
 # A Secure Image Processing Pipeline based on Homomorphic Encryption
 
 ## Overview
-This repository contains the implementation of a privacy-preserving image processing system using homomorphic encryption, specifically the Paillier Cryptosystem. Our project enables operations on encrypted images, eliminating the need for decryption during processing. This approach ensures the privacy and security of image data.
+This repository contains the implementation of a privacy-preserving image processing system using homomorphic encryption, specifically the Paillier Cryptosystem. Our project enables operations on encrypted images, eliminating the need for decryption during processing. This approach ensures the privacy and security of image data. An example of the power of this idea is shown below.
+
+![intro1](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/174ceff0-922f-4c7e-a265-4d3e09c00d00)
+
+This figure shows 2 encrypted images being matched directly in the encrypted domain, where any external observer cannot tell the original contents of the image. Upon decryption, we would find that the original contents were:
+
+![intro2](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/99fa9435-ad47-4843-a6df-52d859a82615)
+
+
 
 ## Features
 - **Paillier Cryptosystem**: Implementation of encryption, decryption, and key generation based on the Paillier Cryptosystem.
