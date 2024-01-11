@@ -5,10 +5,7 @@ This repository contains the implementation of a privacy-preserving image proces
 
 ![intro1](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/174ceff0-922f-4c7e-a265-4d3e09c00d00)
 
-This figure shows 2 encrypted images being matched directly in the encrypted domain, where any external observer cannot tell the original contents of the image. Upon decryption, we would find that the original contents were:
-
-![intro2](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/99fa9435-ad47-4843-a6df-52d859a82615)
-
+This figure shows 2 encrypted images being matched directly in the encrypted domain, where any external observer cannot tell the original contents of the image. The original images contain 2 shots of the Pyramids of Giza, justificating the traingular structure detected by the keypoints. How this operation was performed will be discussed in the upcoming sections.
 
 
 ## Features
