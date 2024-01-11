@@ -32,7 +32,7 @@ The structure of the code is as follows:
 - The "utils_encryptedDomain" folder contains our implementation of the Paillier Cryptosystem, specifically tuned for efficiency and compatability with NumPy Arrays. Furthermore, it contains our implementation of Convolutions in the encrypted domain, as well as any other operations that can potentially be performed on encrypted images
 - The "feature_extractors" folder contains our implementation of Lowe's SIFT algorithm on encrypted images, named HESIFT (Homomorphically Encrypted SIFT). The HESIFT function found at the end of the file can be directly called to extract the keypoints and descriptors.
 
-### How to Run Locally
+## How to Run Locally
 
 To run the project locally, follow the steps below:
 
@@ -61,7 +61,7 @@ To run the project locally, follow the steps below:
    - Open your web browser and navigate to [http://127.0.0.1:8000/](http://127.0.0.1:8000/).
    - Explore the functionalities related to secure image matching using Paillier encryption and HE-SIFT.
 
-### How to Use
+## How to Use
 
 1. **Upload Images:**
    - On the web application, navigate to the image upload section.
@@ -76,7 +76,7 @@ To run the project locally, follow the steps below:
    - Examine the matched images and their corresponding details.
    - The results will include information such as similarity scores or other relevant metrics.
 
-### Dependencies
+## Dependencies
 
 - [Django](https://www.djangoproject.com/): A high-level Python web framework that encourages rapid development and clean, pragmatic design.
 - [OpenCV (cv2)](https://opencv.org/): An open-source computer vision and machine learning software library.
@@ -85,7 +85,7 @@ To run the project locally, follow the steps below:
 - [Matplotlib](https://matplotlib.org/): A comprehensive library for creating static, animated, and interactive visualizations in Python.
 - [Pickle](https://docs.python.org/3/library/pickle.html): A module for serializing and deserializing Python objects.
 
-### License
+## License
 
 This project is licensed under the [MIT License](LICENSE).
 
