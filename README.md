@@ -19,13 +19,13 @@ This figure shows 2 encrypted images being matched directly in the encrypted dom
 - **Image Matching**: Utilizes the Fast Library for Approximate Nearest Neighbors (FLANN) for efficient image matching.
 
 ## HESIFT Showcase:
-# Encrypted DoG Space:
+### Encrypted DoG Space:
 ![DoG_encrypted](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/93a67391-9dcb-4645-bc47-4d715174c248)
 
-# Decrypted DoG Space: 
+### Decrypted DoG Space: 
 ![DoG](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/2ea8e5c7-00af-41c1-b59a-b3c3c689094f)
 
-# Keypoints: 
+### Keypoints: 
 ![birdKeypoints](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/37620937-951f-4ae6-b946-225402f6676a) ![pyramidsKeypoints](https://github.com/AhmedAbdelaal2001/Homomorphically-Encrypted-Image-Processing/assets/101427765/605876dc-2056-4081-b57b-304b387e38cc)
 
 
